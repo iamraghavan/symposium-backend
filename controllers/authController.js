@@ -1,12 +1,21 @@
+// controllers/authController.js
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const mongoose = require("mongoose");
 const User = require("../models/User");
-const Department = require("../models/Department"); // ⬅️ add this
+const Department = require("../models/Department");
 const logger = require("../utils/logger");
 
-const googleClient = new OAuth2Client(process.env.Google_Client_ID || process.env.GOOGLE_CLIENT_ID);
+const googleClientId = process.env.Google_Client_ID || process.env.GOOGLE_CLIENT_ID;
+const googleClientSecret = process.env.Google_Client_Secret || process.env.GOOGLE_CLIENT_SECRET;
+const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+const oauth2Client = new OAuth2Client({
+  clientId: googleClientId,
+  clientSecret: googleClientSecret,
+  redirectUri: googleRedirectUri
+});
 
 /* ============================= Helpers ============================= */
 
@@ -33,7 +42,6 @@ const scopeFilterFor = (actor) => {
   return { _id: actor._id }; // user fallback
 };
 
-/* Validate departmentId existence (if provided) */
 const ensureDepartment = async (departmentId) => {
   if (!departmentId) return null;
   if (!isObjectId(departmentId)) return "Invalid departmentId";
@@ -42,12 +50,60 @@ const ensureDepartment = async (departmentId) => {
   return null;
 };
 
+const mapGoogleProfile = (p = {}) => ({
+  googleId: p.sub,
+  email: (p.email || "").toLowerCase(),
+  name: p.name || p.email?.split("@")[0] || "Google User",
+  picture: p.picture || null,
+  givenName: p.given_name || null,
+  familyName: p.family_name || null,
+  locale: p.locale || null,
+  emailVerified: !!p.email_verified
+});
+
+const upsertUserFromGoogle = async ({ profile, departmentId }) => {
+  const { googleId, email, name, picture, givenName, familyName, locale, emailVerified } = mapGoogleProfile(profile);
+
+  let user = await User.findOne({ email });
+  if (!user) {
+    user = await User.create({
+      name,
+      email,
+      googleId,
+      provider: "google",
+      role: "user",
+      department: departmentId || null,
+      picture,
+      givenName,
+      familyName,
+      locale,
+      emailVerified,
+      isActive: true
+    });
+    logger.info("User created via Google", { email });
+  } else {
+    // link + update profile details
+    if (!user.googleId) user.googleId = googleId;
+    user.provider = "google";
+    if (picture) user.picture = picture;
+    if (givenName) user.givenName = givenName;
+    if (familyName) user.familyName = familyName;
+    if (locale) user.locale = locale;
+    if (typeof emailVerified === "boolean") user.emailVerified = emailVerified;
+  }
+
+  user.lastLoginAt = new Date();
+  await user.save();
+
+  return user;
+};
+
 /* ============================== AUTH ============================== */
 
 // Register (role forced to "user")
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, departmentId } = req.body || {};
+    const { name, email, password, departmentId, address } = req.body || {};
 
     const errors = [];
     if (!isNonEmpty(name)) errors.push({ field: "name", msg: "Name is required" });
@@ -74,6 +130,7 @@ exports.register = async (req, res, next) => {
       role: "user",
       department: departmentId || null,
       provider: "local",
+      address: isNonEmpty(address) ? address.trim() : null,
       isActive: true
     });
 
@@ -120,11 +177,11 @@ exports.login = async (req, res, next) => {
   }
 };
 
-// Google Auth using ID token (no passport)
-// Body: { idToken, departmentId? }
+/* ===== Google ID Token login (simple/SPA flow) =====
+   Body: { idToken, departmentId?, address? } */
 exports.googleAuth = async (req, res, next) => {
   try {
-    const { idToken, departmentId } = req.body || {};
+    const { idToken, departmentId, address } = req.body || {};
     if (!isNonEmpty(idToken))
       return bad(res, 422, "Validation failed", [{ field: "idToken", msg: "idToken is required" }]);
 
@@ -133,34 +190,22 @@ exports.googleAuth = async (req, res, next) => {
       if (depErr) return bad(res, 422, depErr);
     }
 
-    const ticket = await googleClient.verifyIdToken({
+    const ticket = await oauth2Client.verifyIdToken({
       idToken,
-      audience: process.env.Google_Client_ID || process.env.GOOGLE_CLIENT_ID
+      audience: googleClientId
     });
-    const payload = ticket.getPayload();
-    const { sub: googleId, email, name } = payload || {};
 
-    if (!isEmail(email)) return bad(res, 401, "Google authentication failed");
+    const payload = ticket.getPayload() || {};
+    if (!isEmail(payload.email)) return bad(res, 401, "Google authentication failed");
 
-    let user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      user = await User.create({
-        name: isNonEmpty(name) ? name.trim() : email.split("@")[0],
-        email: email.toLowerCase(),
-        googleId,
-        provider: "google",
-        role: "user",
-        department: departmentId || null,
-        isActive: true
-      });
-      logger.info("User created via Google", { email: user.email });
-    } else if (!user.googleId) {
-      user.googleId = googleId;
-      user.provider = "google";
+    // Upsert user + profile
+    let user = await upsertUserFromGoogle({ profile: payload, departmentId });
+
+    // Optionally store address if client sent it
+    if (isNonEmpty(address)) {
+      user.address = address.trim();
+      await user.save();
     }
-
-    user.lastLoginAt = new Date();
-    await user.save();
 
     return res.status(200).json({
       success: true,
@@ -169,6 +214,77 @@ exports.googleAuth = async (req, res, next) => {
     });
   } catch (error) {
     logger.error("Google auth error", { error: error.message });
+    return bad(res, 401, "Google authentication failed");
+  }
+};
+
+/* ===== Full Google OAuth (redirect) =====
+   GET /api/v1/auth/google/url  -> returns consent URL
+   Scopes: openid, email, profile
+*/
+exports.getGoogleAuthUrl = async (req, res) => {
+  try {
+    const state = req.query.state || ""; // optional CSRF/return-to
+    const departmentId = req.query.departmentId || ""; // optional to bind dept
+    const scopes = [
+      "openid",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ];
+
+    const url = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      prompt: "consent",
+      scope: scopes,
+      state: JSON.stringify({ state, departmentId })
+    });
+
+    return res.status(200).json({ success: true, url });
+  } catch (err) {
+    logger.error("getGoogleAuthUrl error", { error: err.message });
+    return bad(res, 500, "Failed to create Google auth URL");
+  }
+};
+
+/* ===== OAuth Callback =====
+   GET /api/v1/auth/google/callback?code=...&state=...
+   Exchanges code -> tokens -> fetches userinfo -> upsert -> returns your JWT
+*/
+exports.googleOAuthCallback = async (req, res) => {
+  try {
+    const { code, state } = req.query || {};
+    if (!isNonEmpty(code)) return bad(res, 400, "Missing authorization code");
+
+    const parsedState = (() => {
+      try { return state ? JSON.parse(state) : {}; } catch { return {}; }
+    })();
+
+    const departmentId = parsedState.departmentId || null;
+    if (departmentId) {
+      const depErr = await ensureDepartment(departmentId);
+      if (depErr) return bad(res, 422, depErr);
+    }
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    // Fetch Google user profile
+    const { data: profile } = await oauth2Client.request({
+      url: "https://www.googleapis.com/oauth2/v3/userinfo"
+    });
+
+    if (!isEmail(profile.email)) return bad(res, 401, "Google authentication failed");
+
+    const user = await upsertUserFromGoogle({ profile, departmentId });
+
+    return res.status(200).json({
+      success: true,
+      token: generateToken(user),
+      user: sanitizeUser(user)
+    });
+  } catch (err) {
+    logger.error("googleOAuthCallback error", { error: err.message });
     return bad(res, 401, "Google authentication failed");
   }
 };
@@ -186,12 +302,9 @@ exports.logout = async (_req, res) => {
 /* ============================== ADMIN ============================= */
 
 // Admin Create User
-// Body: { name, email, password?, role, departmentId? }
-// - super_admin: can create any role; if role=department_admin → departmentId REQUIRED
-// - department_admin: can create only role='user' and departmentId is forced to own department
 exports.adminCreateUser = async (req, res, next) => {
   try {
-    const { name, email, password, role = "user", departmentId } = req.body || {};
+    const { name, email, password, role = "user", departmentId, address, picture } = req.body || {};
 
     const errors = [];
     if (!isNonEmpty(name)) errors.push({ field: "name", msg: "Name is required" });
@@ -200,14 +313,12 @@ exports.adminCreateUser = async (req, res, next) => {
     if (role && !["super_admin", "department_admin", "user"].includes(role))
       errors.push({ field: "role", msg: "Invalid role" });
 
-    // dept_admin creator: cannot set role other than "user"
     if (req.user.role === "department_admin" && role !== "user") {
       errors.push({ field: "role", msg: "Department admin can only create users" });
     }
 
-    // if creating department_admin, a departmentId is required (for super_admin creator)
-    if (req.user.role === "super_admin" && role === "department_admin") {
-      if (!departmentId) errors.push({ field: "departmentId", msg: "departmentId is required for department_admin" });
+    if (req.user.role === "super_admin" && role === "department_admin" && !departmentId) {
+      errors.push({ field: "departmentId", msg: "departmentId is required for department_admin" });
     }
 
     if (departmentId) {
@@ -223,20 +334,15 @@ exports.adminCreateUser = async (req, res, next) => {
     const exists = await User.findOne({ email: email.toLowerCase() });
     if (exists) return bad(res, 409, "User already exists");
 
-    // Determine final role and department
     let finalRole = role;
     let finalDeptId = null;
 
     if (req.user.role === "department_admin") {
       finalRole = "user";
-      finalDeptId = req.user.department || null; // force creator's department
+      finalDeptId = req.user.department || null;
     } else {
-      // super_admin creator
-      if (role === "department_admin") {
-        finalDeptId = departmentId; // required & validated above
-      } else {
-        finalDeptId = departmentId || null;
-      }
+      if (role === "department_admin") finalDeptId = departmentId;
+      else finalDeptId = departmentId || null;
     }
 
     const hashed = password ? await bcrypt.hash(password, 12) : undefined;
@@ -248,6 +354,8 @@ exports.adminCreateUser = async (req, res, next) => {
       role: finalRole,
       department: finalDeptId,
       provider: password ? "local" : "google",
+      address: isNonEmpty(address) ? address.trim() : null,
+      picture: isNonEmpty(picture) ? picture.trim() : null,
       isActive: true
     });
 
@@ -276,7 +384,13 @@ exports.listUsers = async (req, res, next) => {
     if (typeof req.query.isActive !== "undefined") filter.isActive = req.query.isActive === "true";
 
     const [items, total] = await Promise.all([
-      User.find(filter).sort(sort).skip(skip).limit(limit).select("-password").lean(),
+      User.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .select("-password")
+        .populate("department", "id code name shortcode")
+        .lean(),
       User.countDocuments(filter)
     ]);
 
@@ -333,9 +447,11 @@ exports.updateUser = async (req, res, next) => {
       return bad(res, 403, "Forbidden");
     }
 
-    const { name, password, role, departmentId, isActive } = req.body || {};
+    const { name, password, role, departmentId, isActive, address, picture } = req.body || {};
 
     if (typeof name === "string" && isNonEmpty(name)) target.name = name.trim();
+    if (typeof address === "string") target.address = address.trim() || null;
+    if (typeof picture === "string") target.picture = picture.trim() || null;
 
     if (typeof password === "string" && password.length) {
       if (req.user.role !== "super_admin" && String(target._id) !== String(req.user._id))
