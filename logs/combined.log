@@ -1,0 +1,27 @@
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T07:23:03.751Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T07:23:20.639Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T07:27:35.952Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T07:27:51.176Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:36:50.837Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:36:57.073Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:37:28.456Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:37:42.112Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:37:46.003Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:37:48.987Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:42:10.680Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:42:15.002Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:42:26.507Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T08:42:29.308Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T09:05:12.926Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T09:05:19.125Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T09:28:59.458Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T09:31:39.462Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T09:31:56.330Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T09:32:03.510Z"}
+{"error":"Wrong number of segments in token: 4/0AVMBsJh87pYVcOgjO5ByyqOfKtk804wcX5y4DN1EfpZqYoQHKZH5ADsxiC8pWpHgVAAoKw","level":"error","message":"Google auth error","timestamp":"2025-09-14T09:49:07.175Z"}
+{"error":"Wrong number of segments in token: 4/0AVMBsJiH7EXjqnFXgtLu488Ov3asvDOS4S2j0-frmVsf3TQvGW9r0YeFXAM0xIbstj6RzA","level":"error","message":"Google auth error","timestamp":"2025-09-14T09:51:17.662Z"}
+{"email":"raghavanofficials@gmail.com","level":"info","message":"User created via Google","timestamp":"2025-09-14T09:58:30.282Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T10:15:04.219Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T10:15:07.818Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T10:23:20.695Z"}
+{"level":"info","message":"✅ MongoDB connected successfully","timestamp":"2025-09-14T10:25:32.462Z"}
