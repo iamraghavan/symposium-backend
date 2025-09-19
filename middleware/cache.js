@@ -3,13 +3,18 @@ const store = new Map();
 
 /**
  * cache(ttlMs)
- * Caches GET responses (status 200) for ttlMs per URL+query.
+ * Caches GET responses (status 200) for ttlMs per URL + auth key.
  */
 module.exports = function cache(ttlMs = 30_000) {
   return function (req, res, next) {
     if (req.method !== "GET") return next();
 
-    const key = req.originalUrl;
+    // If a bearer token is present, either (a) don't cache, or (b) vary the key.
+    // Here we VARY the key by a short fingerprint of Authorization (not the full token).
+    const auth = req.headers.authorization || "";
+    const authTag = auth.startsWith("Bearer ") ? auth.slice(7, 17) : ""; // tiny tag
+    const key = `${req.originalUrl}::${authTag}`;
+
     const now = Date.now();
     const hit = store.get(key);
     if (hit && hit.expires > now) {

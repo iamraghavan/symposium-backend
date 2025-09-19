@@ -18,23 +18,13 @@ const ensureDepartment = async (departmentId) => {
   return null;
 };
 
-// Department ownership (used for CREATE)
+// Dept admin can act only within their department; super admin can act anywhere
 const mustOwnDepartmentOrSuper = (user, departmentId) => {
   if (user?.role === "super_admin") return true;
   if (user?.role === "department_admin" && String(user.department || "") === String(departmentId || "")) return true;
   return false;
 };
 
-// Stronger check for UPDATE/DELETE/GET (admin must be creator AND same department)
-const mustBeCreatorAndOwnDeptOrSuper = (user, eventDoc) => {
-  if (user?.role === "super_admin") return true;
-  if (user?.role !== "department_admin") return false;
-  const ownsDept = String(eventDoc.department) === String(user.department || "");
-  const isCreator = String(eventDoc.createdBy) === String(user._id);
-  return ownsDept && isCreator;
-};
-
-// Slug fallback (if your Event model doesn’t provide toSlug)
 const toSlugFallback = (s = "") =>
   String(s)
     .toLowerCase()
@@ -81,12 +71,10 @@ exports.createEvent = async (req, res, next) => {
     const depErr = await ensureDepartment(departmentId);
     if (depErr) return bad(res, 422, depErr);
 
-    // RBAC: dept_admin may only create within their department
     if (!mustOwnDepartmentOrSuper(req.user, departmentId)) {
       return bad(res, 403, "Forbidden: cannot create event in another department");
     }
 
-    // Mode-specific validation
     if (mode === "online") {
       if (!online || !online.url) return bad(res, 422, "Online events require { online: { url } }");
     } else if (mode === "offline") {
@@ -144,10 +132,9 @@ exports.createEvent = async (req, res, next) => {
 };
 
 /* --------------------------------- LIST ------------------------------- */
-// Public: only published. Dept admin: only their dept + createdBy self. Super: all (with optional filters).
+// Public: only published. Dept admin: ALL events in their department. Super: all (with optional filters).
 exports.listEvents = async (req, res, next) => {
   try {
-    // pagination
     const page  = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
     const skip  = (page - 1) * limit;
@@ -157,12 +144,10 @@ exports.listEvents = async (req, res, next) => {
     const isAuthed = !!req.user;
 
     if (!isAuthed) {
-      // public: only published
       filter.status = "published";
     } else if (req.user.role === "department_admin") {
-      // STRICT: only events they created in their department
+      // 👇 Changed: dept admin sees all events in their department (not only creator)
       filter.department = req.user.department;
-      filter.createdBy  = req.user._id;
     } else if (req.user.role === "super_admin") {
       if (req.query.departmentId) {
         if (!isObjectId(req.query.departmentId)) return bad(res, 422, "Invalid departmentId");
@@ -170,7 +155,6 @@ exports.listEvents = async (req, res, next) => {
       }
     }
 
-    // other filters (available to all callers)
     if (req.query.status) {
       if (!["draft", "published", "cancelled"].includes(req.query.status)) {
         return bad(res, 422, "Invalid status");
@@ -215,14 +199,12 @@ exports.getEvent = async (req, res, next) => {
 
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    // Public: only published
     if (!req.user && doc.status !== "published") return bad(res, 403, "Forbidden");
 
-    // Dept admin: must be creator AND same department
+    // Dept admin can read any event in their department
     if (req.user?.role === "department_admin") {
       const sameDept = String(doc.department?._id || doc.department) === String(req.user.department || "");
-      const sameCreator = String(doc.createdBy?._id || doc.createdBy) === String(req.user._id);
-      if (!sameDept || !sameCreator) return bad(res, 403, "Forbidden");
+      if (!sameDept) return bad(res, 403, "Forbidden");
     }
 
     return res.status(200).json({ success: true, data: doc });
@@ -233,6 +215,7 @@ exports.getEvent = async (req, res, next) => {
 };
 
 /* -------------------------------- UPDATE ------------------------------- */
+// Dept admin can update any event in their department; super admin can update all
 exports.updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -241,8 +224,7 @@ exports.updateEvent = async (req, res, next) => {
     const doc = await Event.findById(id);
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    // Dept admin: must be the creator AND same department; super can edit all
-    if (!mustBeCreatorAndOwnDeptOrSuper(req.user, doc)) {
+    if (!mustOwnDepartmentOrSuper(req.user, doc.department)) {
       return bad(res, 403, "Forbidden");
     }
 
@@ -343,6 +325,7 @@ exports.updateEvent = async (req, res, next) => {
 };
 
 /* -------------------------------- DELETE ------------------------------- */
+// Dept admin can delete any event in their department; super admin can delete all
 exports.deleteEvent = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -351,8 +334,7 @@ exports.deleteEvent = async (req, res, next) => {
     const doc = await Event.findById(id);
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    // Dept admin: must be the creator AND same department; super can delete all
-    if (!mustBeCreatorAndOwnDeptOrSuper(req.user, doc)) {
+    if (!mustOwnDepartmentOrSuper(req.user, doc.department)) {
       return bad(res, 403, "Forbidden");
     }
 
