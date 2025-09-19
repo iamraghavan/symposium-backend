@@ -9,6 +9,6 @@ const router = express.Router();
 // Auth module (includes /register, /login, /google, /users CRUD, etc.)
 router.use("/auth", require("../authRoutes"));
 router.use("/events", require("../eventRoutes"));
-
+router.use("/departments", require("../departmentRoutes"));
 
 module.exports = router;

@@ -35,6 +35,7 @@ const openapi = {
   tags: [
     { name: "Auth", description: "Authentication & Session (requires x-api-key; some also require JWT)" },
     { name: "Users", description: "User CRUD (admin-only). Requires x-api-key + Bearer JWT." },
+    { name: "Departments", description: "Department read (API key). CRUD restricted to super_admin (JWT)." },
     { name: "Events", description: "Event CRUD & public listing. Read requires x-api-key; write requires JWT + role." },
     { name: "Health", description: "Service health (no API key/JWT required by default)." }
   ],
@@ -81,19 +82,42 @@ const openapi = {
           hasMore: { type: "boolean", example: true }
         }
       },
+
+      /* ===== Departments ===== */
       Department: {
         type: "object",
         properties: {
           _id: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" },
           id: { type: "string", example: "f2bb5f5e-4c9d-49af-9253-4f9c23e7a731" },
-          code: { type: "string", example: "EGSPEC/EEE" },
-          name: { type: "string", example: "B.E — Electrical & Electronics Engineering" },
-          shortcode: { type: "string", example: "EEE" },
+          code: { type: "string", example: "EGSPEC/MECH" },
+          name: { type: "string", example: "B.E — Mechanical Engineering" },
+          shortcode: { type: "string", example: "MECH" },
           isActive: { type: "boolean", example: true },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" }
         }
       },
+      CreateDepartmentRequest: {
+        type: "object",
+        required: ["code", "name", "shortcode"],
+        properties: {
+          code: { type: "string", example: "EGSPEC/MECH" },
+          name: { type: "string", example: "B.E — Mechanical Engineering" },
+          shortcode: { type: "string", example: "MECH" },
+          isActive: { type: "boolean", example: true }
+        }
+      },
+      UpdateDepartmentRequest: {
+        type: "object",
+        properties: {
+          code: { type: "string", example: "EGSPEC/MECH" },
+          name: { type: "string", example: "B.E — Mechanical Engineering (UG)" },
+          shortcode: { type: "string", example: "MECH" },
+          isActive: { type: "boolean", example: true }
+        }
+      },
+
+      /* ===== Users ===== */
       User: {
         type: "object",
         properties: {
@@ -181,38 +205,34 @@ const openapi = {
       /* ====== EVENTS ====== */
       EventContact: {
         type: "object",
-        properties: {
-          name: { type: "string", example: "Raghavan" },
-          phone: { type: "string", example: "+91-9000000000" },
-          email: { type: "string", example: "raghavan@egspec.org" }
-        }
+        properties: { name: { type: "string" }, phone: { type: "string" }, email: { type: "string" } }
       },
       EventOnline: {
         type: "object",
         properties: {
-          provider: { type: "string", enum: ["google_meet", "zoom", "other"], example: "google_meet" },
-          url: { type: "string", example: "https://meet.google.com/abc-defg-hij" }
+          provider: { type: "string", enum: ["google_meet", "zoom", "other"] },
+          url: { type: "string" }
         }
       },
       EventOffline: {
         type: "object",
         properties: {
-          venueName: { type: "string", example: "Main Auditorium" },
-          address: { type: "string", example: "EGSPEC Campus, Nagapattinam" },
-          mapLink: { type: "string", example: "https://maps.google.com/?q=EGSPEC" }
+          venueName: { type: "string" },
+          address: { type: "string" },
+          mapLink: { type: "string" }
         }
       },
       EventPayment: {
         type: "object",
         properties: {
-          method: { type: "string", enum: ["none", "gateway", "qr"], example: "gateway" },
-          gatewayProvider: { type: "string", example: "razorpay" },
-          gatewayLink: { type: "string", example: "https://rzp.io/i/xyz123" },
-          price: { type: "number", example: 199 },
-          currency: { type: "string", example: "INR" },
-          qrImageUrl: { type: "string", example: "https://cdn.egspec.org/pay/qr.jpg" },
-          qrInstructions: { type: "string", example: "Pay and upload screenshot in registration form" },
-          allowScreenshot: { type: "boolean", example: true }
+          method: { type: "string", enum: ["none", "gateway", "qr"] },
+          gatewayProvider: { type: "string" },
+          gatewayLink: { type: "string" },
+          price: { type: "number" },
+          currency: { type: "string" },
+          qrImageUrl: { type: "string" },
+          qrInstructions: { type: "string" },
+          allowScreenshot: { type: "boolean" }
         }
       },
       Event: {
@@ -221,32 +241,26 @@ const openapi = {
           _id: { type: "string", example: "66f5a81e3f65bb57b8c84e91" },
           name: { type: "string", example: "AI Symposium 2025" },
           slug: { type: "string", example: "ai-symposium-2025-abcd" },
-          description: { type: "string", example: "Deep dive into AI & Data Science." },
-          thumbnailUrl: { type: "string", example: "https://cdn.egspec.org/events/ai-thumb.jpg" },
-          mode: { type: "string", enum: ["online", "offline"], example: "online" },
+          description: { type: "string" },
+          thumbnailUrl: { type: "string" },
+          mode: { type: "string", enum: ["online", "offline"] },
           online: { $ref: "#/components/schemas/EventOnline" },
           offline: { $ref: "#/components/schemas/EventOffline" },
-          startAt: { type: "string", format: "date-time", example: "2025-11-21T09:30:00.000Z" },
-          endAt: { type: "string", format: "date-time", example: "2025-11-21T12:30:00.000Z" },
+          startAt: { type: "string", format: "date-time" },
+          endAt: { type: "string", format: "date-time" },
           department: {
-            oneOf: [
-              { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" },
-              { $ref: "#/components/schemas/Department" }
-            ]
+            oneOf: [{ type: "string" }, { $ref: "#/components/schemas/Department" }]
           },
           createdBy: {
-            oneOf: [
-              { type: "string", example: "65015a71b05c3495bc6e5b5c" },
-              { $ref: "#/components/schemas/User" }
-            ]
+            oneOf: [{ type: "string" }, { $ref: "#/components/schemas/User" }]
           },
           payment: { $ref: "#/components/schemas/EventPayment" },
           contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
-          departmentSite: { type: "string", example: "https://cse.egspec.org/sympo" },
-          contactEmail: { type: "string", example: "sympo@egspec.org" },
-          extra: { type: "object", additionalProperties: true, example: { tracks: ["Vision", "NLP"] } },
-          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" },
-          isActive: { type: "boolean", example: true },
+          departmentSite: { type: "string" },
+          contactEmail: { type: "string" },
+          extra: { type: "object", additionalProperties: true },
+          status: { type: "string", enum: ["draft", "published", "cancelled"] },
+          isActive: { type: "boolean" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" }
         }
@@ -255,21 +269,21 @@ const openapi = {
         type: "object",
         required: ["name", "mode", "startAt", "endAt", "departmentId"],
         properties: {
-          name: { type: "string", example: "AI Symposium 2025" },
-          description: { type: "string", example: "Deep dive into AI & Data Science." },
-          thumbnailUrl: { type: "string", example: "https://cdn.egspec.org/events/ai-thumb.jpg" },
-          mode: { type: "string", enum: ["online", "offline"], example: "online" },
+          name: { type: "string" },
+          description: { type: "string" },
+          thumbnailUrl: { type: "string" },
+          mode: { type: "string", enum: ["online", "offline"] },
           online: { $ref: "#/components/schemas/EventOnline" },
           offline: { $ref: "#/components/schemas/EventOffline" },
-          startAt: { type: "string", format: "date-time", example: "2025-11-21T09:30:00.000Z" },
-          endAt: { type: "string", format: "date-time", example: "2025-11-21T12:30:00.000Z" },
-          departmentId: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" },
+          startAt: { type: "string", format: "date-time" },
+          endAt: { type: "string", format: "date-time" },
+          departmentId: { type: "string" },
           payment: { $ref: "#/components/schemas/EventPayment" },
           contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
-          departmentSite: { type: "string", example: "https://cse.egspec.org/sympo" },
-          contactEmail: { type: "string", example: "sympo@egspec.org" },
-          extra: { type: "object", example: { tracks: ["Vision", "NLP"] } },
-          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" }
+          departmentSite: { type: "string" },
+          contactEmail: { type: "string" },
+          extra: { type: "object" },
+          status: { type: "string", enum: ["draft", "published", "cancelled"] }
         }
       },
       UpdateEventRequest: {
@@ -296,12 +310,13 @@ const openapi = {
       Page: { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
       Limit: { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
       Sort: { name: "sort", in: "query", schema: { type: "string", example: "-createdAt,name" } },
-      Q: { name: "q", in: "query", schema: { type: "string", example: "john" } },
+      Q: { name: "q", in: "query", schema: { type: "string", example: "MECH" } },
       Role: { name: "role", in: "query", schema: { type: "string", enum: ["super_admin", "department_admin", "user"] } },
       DepartmentId: { name: "departmentId", in: "query", schema: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" } },
       IsActive: { name: "isActive", in: "query", schema: { type: "boolean" } },
       UserId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "65015a71b05c3495bc6e5b5c" },
-
+      /* Departments */
+      DepartmentIdPath: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "64fdc3f1a2b4c5d6e7f89012" },
       /* Events */
       EventId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "66f5a81e3f65bb57b8c84e91" },
       EventStatus: { name: "status", in: "query", schema: { type: "string", enum: ["draft", "published", "cancelled"] } },
@@ -309,7 +324,7 @@ const openapi = {
     }
   },
 
-  // Global: API key required for all /api/* routes (Swagger UI will show an Authorize button)
+  // Global: API key required for all /api/* routes
   security: [{ ApiKeyHeader: [] }],
 
   paths: {
@@ -350,17 +365,7 @@ const openapi = {
           required: true,
           content: {
             "application/json": {
-              schema: { $ref: "#/components/schemas/RegisterRequest" },
-              examples: {
-                default: {
-                  value: {
-                    name: "Student User",
-                    email: "student@example.com",
-                    password: "secret123",
-                    departmentId: "64fdc3f1a2b4c5d6e7f89012"
-                  }
-                }
-              }
+              schema: { $ref: "#/components/schemas/RegisterRequest" }
             }
           }
         },
@@ -370,7 +375,6 @@ const openapi = {
         }
       }
     },
-
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
@@ -381,8 +385,7 @@ const openapi = {
           required: true,
           content: {
             "application/json": {
-              schema: { $ref: "#/components/schemas/LoginRequest" },
-              examples: { default: { value: { email: "rootadmin@example.com", password: "Admin@123" } } }
+              schema: { $ref: "#/components/schemas/LoginRequest" }
             }
           }
         },
@@ -392,7 +395,6 @@ const openapi = {
         }
       }
     },
-
     "/api/v1/auth/google": {
       post: {
         tags: ["Auth"],
@@ -403,8 +405,7 @@ const openapi = {
           required: true,
           content: {
             "application/json": {
-              schema: { $ref: "#/components/schemas/GoogleAuthRequest" },
-              examples: { default: { value: { idToken: "eyJhbGciOi...", departmentId: "64fdc3f1a2b4c5d6e7f89012" } } }
+              schema: { $ref: "#/components/schemas/GoogleAuthRequest" }
             }
           }
         },
@@ -414,7 +415,6 @@ const openapi = {
         }
       }
     },
-
     "/api/v1/auth/me": {
       get: {
         tags: ["Auth"],
@@ -426,10 +426,7 @@ const openapi = {
             description: "OK",
             content: {
               "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { success: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } }
-                }
+                schema: { type: "object", properties: { success: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } } }
               }
             }
           },
@@ -437,7 +434,6 @@ const openapi = {
         }
       }
     },
-
     "/api/v1/auth/logout": {
       post: {
         tags: ["Auth"],
@@ -461,41 +457,12 @@ const openapi = {
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         requestBody: {
           required: true,
-          content: {
-            "application/json": {
-              schema: { $ref: "#/components/schemas/AdminCreateUserRequest" },
-              examples: {
-                createDeptAdmin: {
-                  summary: "Create Department Admin (super_admin)",
-                  value: {
-                    name: "EEE Department Admin",
-                    email: "eeeadmin@egspec.org",
-                    password: "EEE@123",
-                    role: "department_admin",
-                    departmentId: "64fdc3f1a2b4c5d6e7f89012"
-                  }
-                },
-                createUserByDeptAdmin: {
-                  summary: "Create User (department_admin)",
-                  value: {
-                    name: "Student User",
-                    email: "student1@egspec.org",
-                    password: "secret123",
-                    role: "user"
-                  }
-                }
-              }
-            }
-          }
+          content: { "application/json": { schema: { $ref: "#/components/schemas/AdminCreateUserRequest" } } }
         },
         responses: {
           "201": {
             description: "Created",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } }
-              }
-            }
+            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } }
           },
           "403": { description: "Forbidden (role constraints)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
           "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
@@ -536,7 +503,6 @@ const openapi = {
         }
       }
     },
-
     "/api/v1/auth/users/{id}": {
       get: {
         tags: ["Users"],
@@ -580,6 +546,111 @@ const openapi = {
         parameters: [{ $ref: "#/components/parameters/UserId" }],
         responses: {
           "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+
+    /* =================== DEPARTMENTS =================== */
+    "/api/v1/departments": {
+      get: {
+        tags: ["Departments"],
+        summary: "List departments (public read with API key; JWT optional)",
+        description: [
+          "- Headers required: `x-api-key`, `Accept: application/json`.",
+          "- By default returns only `isActive=true`.",
+          "- If caller is **super_admin** (JWT) and passes `includeInactive=true`, inactive departments are included.",
+          "- Filters: `page`, `limit`, `sort` (e.g., `name`), `q`, `includeInactive`."
+        ].join("\n"),
+        parameters: [
+          { $ref: "#/components/parameters/Page" },
+          { $ref: "#/components/parameters/Limit" },
+          { name: "sort", in: "query", schema: { type: "string", example: "name" } },
+          { $ref: "#/components/parameters/Q" },
+          { name: "includeInactive", in: "query", schema: { type: "string", enum: ["true", "false"], example: "false" } }
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    meta: { $ref: "#/components/schemas/PaginationMeta" },
+                    data: { type: "array", items: { $ref: "#/components/schemas/Department" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        tags: ["Departments"],
+        summary: "Create department (super_admin only)",
+        description:
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
+        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateDepartmentRequest" } } }
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } }
+          },
+          "409": { description: "Duplicate code/shortcode", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/departments/{id}": {
+      get: {
+        tags: ["Departments"],
+        summary: "Get department by id (public read with API key; JWT optional)",
+        description: [
+          "- Headers required: `x-api-key`, `Accept: application/json`.",
+          "- By default only returns if `isActive=true`.",
+          "- If caller is **super_admin** (JWT) and passes `includeInactive=true`, an inactive department can be retrieved."
+        ].join("\n"),
+        parameters: [
+          { $ref: "#/components/parameters/DepartmentIdPath" },
+          { name: "includeInactive", in: "query", schema: { type: "string", enum: ["true", "false"], example: "false" } }
+        ],
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      patch: {
+        tags: ["Departments"],
+        summary: "Update department (super_admin only)",
+        description:
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
+        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        parameters: [{ $ref: "#/components/parameters/DepartmentIdPath" }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateDepartmentRequest" } } }
+        },
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          "409": { description: "Duplicate code/shortcode", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      delete: {
+        tags: ["Departments"],
+        summary: "Delete department (soft) — super_admin only",
+        description:
+          "Sets `isActive=false`. Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
+        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        parameters: [{ $ref: "#/components/parameters/DepartmentIdPath" }],
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
@@ -646,7 +717,6 @@ const openapi = {
         }
       }
     },
-
     "/api/v1/events/{id}": {
       get: {
         tags: ["Events"],
