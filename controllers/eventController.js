@@ -4,7 +4,10 @@ const Event = require("../models/Event");
 const Department = require("../models/Department");
 const logger = require("../utils/logger");
 
+/* -------------------------- helpers & guards -------------------------- */
+
 const isObjectId = (id) => mongoose.isValidObjectId(id);
+
 const bad = (res, status, message, details) =>
   res.status(status).json({ success: false, message, ...(details ? { details } : {}) });
 
@@ -15,32 +18,51 @@ const ensureDepartment = async (departmentId) => {
   return null;
 };
 
-// RBAC scope: dept_admin can only touch own department; super_admin can touch any
+// Department ownership (used for CREATE)
 const mustOwnDepartmentOrSuper = (user, departmentId) => {
-  if (user.role === "super_admin") return true;
-  if (user.role === "department_admin" && String(user.department || "") === String(departmentId || "")) return true;
+  if (user?.role === "super_admin") return true;
+  if (user?.role === "department_admin" && String(user.department || "") === String(departmentId || "")) return true;
   return false;
 };
 
-/* =================== CREATE =================== */
+// Stronger check for UPDATE/DELETE/GET (admin must be creator AND same department)
+const mustBeCreatorAndOwnDeptOrSuper = (user, eventDoc) => {
+  if (user?.role === "super_admin") return true;
+  if (user?.role !== "department_admin") return false;
+  const ownsDept = String(eventDoc.department) === String(user.department || "");
+  const isCreator = String(eventDoc.createdBy) === String(user._id);
+  return ownsDept && isCreator;
+};
+
+// Slug fallback (if your Event model doesn’t provide toSlug)
+const toSlugFallback = (s = "") =>
+  String(s)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 80);
+
+/* -------------------------------- CREATE ------------------------------ */
 exports.createEvent = async (req, res, next) => {
   try {
     const {
       name,
       description,
       thumbnailUrl,
-      mode, // online|offline
-      online, // { provider, url }
-      offline, // { venueName, address, mapLink }
+      mode,              // 'online' | 'offline'
+      online,            // { provider, url }
+      offline,           // { venueName, address, mapLink }
       startAt,
       endAt,
       departmentId,
-      payment, // { method, gatewayProvider, gatewayLink, price, currency, qrImageUrl, qrInstructions, allowScreenshot }
-      contacts, // [{ name, phone, email }]
+      payment,           // { method, gatewayProvider, gatewayLink, price, currency, qrImageUrl, qrInstructions, allowScreenshot }
+      contacts,          // [{ name, phone, email }]
       departmentSite,
       contactEmail,
       extra,
-      status // draft|published|cancelled
+      status             // 'draft' | 'published' | 'cancelled'
     } = req.body || {};
 
     const errors = [];
@@ -71,38 +93,47 @@ exports.createEvent = async (req, res, next) => {
       if (!offline || !offline.venueName) return bad(res, 422, "Offline events require { offline: { venueName } }");
     }
 
-    const slug = Event.toSlug(name);
+    const slug = typeof Event.toSlug === "function" ? Event.toSlug(name) : toSlugFallback(name);
+
     const doc = await Event.create({
       name: name.trim(),
       slug,
       description: description?.trim(),
       thumbnailUrl: thumbnailUrl?.trim(),
       mode,
-      online: mode === "online" ? { provider: online?.provider || "other", url: online.url?.trim() } : undefined,
-      offline: mode === "offline" ? {
-        venueName: offline?.venueName?.trim(),
-        address: offline?.address?.trim(),
-        mapLink: offline?.mapLink?.trim()
-      } : undefined,
+      online: mode === "online"
+        ? { provider: online?.provider || "other", url: online.url?.trim() }
+        : undefined,
+      offline: mode === "offline"
+        ? {
+            venueName: offline?.venueName?.trim(),
+            address: offline?.address?.trim(),
+            mapLink: offline?.mapLink?.trim()
+          }
+        : undefined,
       startAt: start,
       endAt: end,
       department: departmentId,
       createdBy: req.user._id,
-      payment: payment ? {
-        method: payment.method || "none",
-        gatewayProvider: payment.gatewayProvider?.trim(),
-        gatewayLink: payment.gatewayLink?.trim(),
-        price: typeof payment.price === "number" ? payment.price : undefined,
-        currency: payment.currency || "INR",
-        qrImageUrl: payment.qrImageUrl?.trim(),
-        qrInstructions: payment.qrInstructions?.trim(),
-        allowScreenshot: typeof payment.allowScreenshot === "boolean" ? payment.allowScreenshot : true
-      } : { method: "none" },
+      payment: payment
+        ? {
+            method: payment.method || "none",
+            gatewayProvider: payment.gatewayProvider?.trim(),
+            gatewayLink: payment.gatewayLink?.trim(),
+            price: typeof payment.price === "number" ? payment.price : undefined,
+            currency: payment.currency || "INR",
+            qrImageUrl: payment.qrImageUrl?.trim(),
+            qrInstructions: payment.qrInstructions?.trim(),
+            allowScreenshot:
+              typeof payment.allowScreenshot === "boolean" ? payment.allowScreenshot : true
+          }
+        : { method: "none" },
       contacts: Array.isArray(contacts) ? contacts.slice(0, 10) : [],
       departmentSite: departmentSite?.trim(),
       contactEmail: contactEmail?.trim()?.toLowerCase(),
       extra: extra && typeof extra === "object" ? extra : {},
-      status: status && ["draft", "published", "cancelled"].includes(status) ? status : "draft"
+      status: status && ["draft", "published", "cancelled"].includes(status) ? status : "draft",
+      isActive: true
     });
 
     return res.status(201).json({ success: true, data: doc });
@@ -112,54 +143,42 @@ exports.createEvent = async (req, res, next) => {
   }
 };
 
-/* =================== LIST (public or admin) =================== */
+/* --------------------------------- LIST ------------------------------- */
+// Public: only published. Dept admin: only their dept + createdBy self. Super: all (with optional filters).
 exports.listEvents = async (req, res, next) => {
   try {
-    // Filters
-    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    // pagination
+    const page  = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
-    const skip = (page - 1) * limit;
-    const sort = (req.query.sort || "-startAt").split(",").join(" ");
+    const skip  = (page - 1) * limit;
+    const sort  = (req.query.sort || "-startAt").split(",").join(" ");
 
     const filter = { isActive: true };
+    const isAuthed = !!req.user;
 
-    // Public listing: if no JWT, only show published events by default
-    const isAuthed = !!req.user; // depends on route wiring
     if (!isAuthed) {
+      // public: only published
       filter.status = "published";
-    } else {
-      // If authed department_admin, allow scoping by their department if requested
-      if (req.user.role === "department_admin") {
-        // If no department provided, default to own department
-        if (req.query.departmentId) {
-          if (!isObjectId(req.query.departmentId)) return bad(res, 422, "Invalid departmentId");
-          if (String(req.query.departmentId) !== String(req.user.department || "")) {
-            return bad(res, 403, "Forbidden for this departmentId");
-          }
-          filter.department = req.query.departmentId;
-        } else {
-          filter.department = req.user.department;
-        }
+    } else if (req.user.role === "department_admin") {
+      // STRICT: only events they created in their department
+      filter.department = req.user.department;
+      filter.createdBy  = req.user._id;
+    } else if (req.user.role === "super_admin") {
+      if (req.query.departmentId) {
+        if (!isObjectId(req.query.departmentId)) return bad(res, 422, "Invalid departmentId");
+        filter.department = req.query.departmentId;
       }
-      // super_admin: can see all, but you can still pass departmentId to filter
     }
 
-    if (req.query.departmentId && req.user?.role === "super_admin") {
-      if (!isObjectId(req.query.departmentId)) return bad(res, 422, "Invalid departmentId");
-      filter.department = req.query.departmentId;
-    }
+    // other filters (available to all callers)
     if (req.query.status) {
       if (!["draft", "published", "cancelled"].includes(req.query.status)) {
         return bad(res, 422, "Invalid status");
       }
       filter.status = req.query.status;
     }
-    if (req.query.q) {
-      filter.name = { $regex: req.query.q, $options: "i" };
-    }
-    if (req.query.upcoming === "true") {
-      filter.endAt = { $gte: new Date() };
-    }
+    if (req.query.q) filter.name = { $regex: req.query.q, $options: "i" };
+    if (req.query.upcoming === "true") filter.endAt = { $gte: new Date() };
 
     const [items, total] = await Promise.all([
       Event.find(filter)
@@ -183,7 +202,7 @@ exports.listEvents = async (req, res, next) => {
   }
 };
 
-/* =================== GET ONE =================== */
+/* --------------------------------- GET -------------------------------- */
 exports.getEvent = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -196,15 +215,14 @@ exports.getEvent = async (req, res, next) => {
 
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    // Public readers can only access published events
-    if (!req.user && doc.status !== "published") {
-      return bad(res, 403, "Forbidden");
-    }
+    // Public: only published
+    if (!req.user && doc.status !== "published") return bad(res, 403, "Forbidden");
 
-    // Department admin can only read their dept's events (unless super)
-    if (req.user?.role === "department_admin" &&
-        String(doc.department?._id || doc.department) !== String(req.user.department || "")) {
-      return bad(res, 403, "Forbidden");
+    // Dept admin: must be creator AND same department
+    if (req.user?.role === "department_admin") {
+      const sameDept = String(doc.department?._id || doc.department) === String(req.user.department || "");
+      const sameCreator = String(doc.createdBy?._id || doc.createdBy) === String(req.user._id);
+      if (!sameDept || !sameCreator) return bad(res, 403, "Forbidden");
     }
 
     return res.status(200).json({ success: true, data: doc });
@@ -214,7 +232,7 @@ exports.getEvent = async (req, res, next) => {
   }
 };
 
-/* =================== UPDATE (PATCH) =================== */
+/* -------------------------------- UPDATE ------------------------------- */
 exports.updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -223,8 +241,8 @@ exports.updateEvent = async (req, res, next) => {
     const doc = await Event.findById(id);
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    // RBAC: dept_admin must own department; super can edit all
-    if (!mustOwnDepartmentOrSuper(req.user, doc.department)) {
+    // Dept admin: must be the creator AND same department; super can edit all
+    if (!mustBeCreatorAndOwnDeptOrSuper(req.user, doc)) {
       return bad(res, 403, "Forbidden");
     }
 
@@ -247,9 +265,8 @@ exports.updateEvent = async (req, res, next) => {
 
     if (typeof name === "string" && name.trim()) {
       doc.name = name.trim();
-      // optional: regenerate slug when name changes
       if (!doc.slug || req.query.regenSlug === "true") {
-        doc.slug = Event.toSlug(doc.name);
+        doc.slug = typeof Event.toSlug === "function" ? Event.toSlug(doc.name) : toSlugFallback(doc.name);
       }
     }
     if (typeof description === "string") doc.description = description.trim();
@@ -257,11 +274,8 @@ exports.updateEvent = async (req, res, next) => {
 
     if (mode && ["online", "offline"].includes(mode)) {
       doc.mode = mode;
-      if (mode === "online") {
-        doc.offline = undefined;
-      } else {
-        doc.online = undefined;
-      }
+      if (mode === "online") doc.offline = undefined;
+      else doc.online = undefined;
     }
 
     if (online && doc.mode === "online") {
@@ -302,9 +316,10 @@ exports.updateEvent = async (req, res, next) => {
         currency: payment.currency || doc.payment?.currency || "INR",
         qrImageUrl: payment.qrImageUrl?.trim() || doc.payment?.qrImageUrl,
         qrInstructions: payment.qrInstructions?.trim() || doc.payment?.qrInstructions,
-        allowScreenshot: typeof payment.allowScreenshot === "boolean"
-          ? payment.allowScreenshot
-          : doc.payment?.allowScreenshot ?? true
+        allowScreenshot:
+          typeof payment.allowScreenshot === "boolean"
+            ? payment.allowScreenshot
+            : (doc.payment?.allowScreenshot ?? true)
       };
     }
 
@@ -327,7 +342,7 @@ exports.updateEvent = async (req, res, next) => {
   }
 };
 
-/* =================== DELETE (soft) =================== */
+/* -------------------------------- DELETE ------------------------------- */
 exports.deleteEvent = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -336,7 +351,8 @@ exports.deleteEvent = async (req, res, next) => {
     const doc = await Event.findById(id);
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    if (!mustOwnDepartmentOrSuper(req.user, doc.department)) {
+    // Dept admin: must be the creator AND same department; super can delete all
+    if (!mustBeCreatorAndOwnDeptOrSuper(req.user, doc)) {
       return bad(res, 403, "Forbidden");
     }
 
