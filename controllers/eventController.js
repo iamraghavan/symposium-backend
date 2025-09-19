@@ -1,4 +1,3 @@
-// controllers/eventController.js
 const mongoose = require("mongoose");
 const Event = require("../models/Event");
 const Department = require("../models/Department");
@@ -131,9 +130,66 @@ exports.createEvent = async (req, res, next) => {
   }
 };
 
-/* --------------------------------- LIST ------------------------------- */
-// Public: only published. Dept admin: ALL events in their department. Super: all (with optional filters).
-exports.listEvents = async (req, res, next) => {
+/* ------------------------------ PUBLIC GETS --------------------------- */
+
+// PUBLIC: list published only
+exports.listPublicEvents = async (req, res, next) => {
+  try {
+    const page  = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
+    const skip  = (page - 1) * limit;
+    const sort  = (req.query.sort || "-startAt").split(",").join(" ");
+
+    const filter = { isActive: true, status: "published" };
+
+    // Optional public filters
+    if (req.query.departmentId && isObjectId(req.query.departmentId)) {
+      filter.department = req.query.departmentId;
+    }
+    if (req.query.q) filter.name = { $regex: req.query.q, $options: "i" };
+    if (req.query.upcoming === "true") filter.endAt = { $gte: new Date() };
+
+    const [items, total] = await Promise.all([
+      Event.find(filter)
+        .sort(sort).skip(skip).limit(limit)
+        .populate("department", "id code name shortcode")
+        .populate("createdBy", "name email role")
+        .lean(),
+      Event.countDocuments(filter)
+    ]);
+
+    res.status(200).json({
+      success: true,
+      meta: { total, page, limit, hasMore: skip + items.length < total },
+      data: items
+    });
+  } catch (err) { next(err); }
+};
+
+// PUBLIC: get one (only if published)
+exports.getPublicEventById = async (req, res, next) => {
+  try {
+    const { id } = req.params || {};
+    if (!isObjectId(id)) return bad(res, 422, "Invalid event id");
+
+    const doc = await Event.findById(id)
+      .populate("department", "id code name shortcode")
+      .populate("createdBy", "name email role")
+      .lean();
+
+    if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
+    if (doc.status !== "published") return bad(res, 403, "Forbidden");
+
+    res.status(200).json({ success: true, data: doc });
+  } catch (err) { next(err); }
+};
+
+/* ------------------------------- ADMIN GETS --------------------------- */
+
+// ADMIN: list all statuses
+// dept_admin => all events in their department
+// super_admin => all events (optionally filter departmentId)
+exports.adminListEvents = async (req, res, next) => {
   try {
     const page  = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
@@ -141,13 +197,9 @@ exports.listEvents = async (req, res, next) => {
     const sort  = (req.query.sort || "-startAt").split(",").join(" ");
 
     const filter = { isActive: true };
-    const isAuthed = !!req.user;
 
-    if (!isAuthed) {
-      filter.status = "published";
-    } else if (req.user.role === "department_admin") {
-      // 👇 Changed: dept admin sees all events in their department (not only creator)
-      filter.department = req.user.department;
+    if (req.user.role === "department_admin") {
+      filter.department = req.user.department; // ALL statuses in own dept
     } else if (req.user.role === "super_admin") {
       if (req.query.departmentId) {
         if (!isObjectId(req.query.departmentId)) return bad(res, 422, "Invalid departmentId");
@@ -155,10 +207,10 @@ exports.listEvents = async (req, res, next) => {
       }
     }
 
+    // Optional admin filters (status works here)
     if (req.query.status) {
-      if (!["draft", "published", "cancelled"].includes(req.query.status)) {
-        return bad(res, 422, "Invalid status");
-      }
+      const allowed = ["draft", "published", "cancelled"];
+      if (!allowed.includes(req.query.status)) return bad(res, 422, "Invalid status");
       filter.status = req.query.status;
     }
     if (req.query.q) filter.name = { $regex: req.query.q, $options: "i" };
@@ -166,28 +218,25 @@ exports.listEvents = async (req, res, next) => {
 
     const [items, total] = await Promise.all([
       Event.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
+        .sort(sort).skip(skip).limit(limit)
         .populate("department", "id code name shortcode")
         .populate("createdBy", "name email role")
         .lean(),
       Event.countDocuments(filter)
     ]);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       meta: { total, page, limit, hasMore: skip + items.length < total },
       data: items
     });
-  } catch (err) {
-    logger.error("listEvents error", { error: err.message });
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-/* --------------------------------- GET -------------------------------- */
-exports.getEvent = async (req, res, next) => {
+// ADMIN: get one (all statuses)
+// dept_admin => only inside their department
+// super_admin => any
+exports.adminGetEventById = async (req, res, next) => {
   try {
     const { id } = req.params || {};
     if (!isObjectId(id)) return bad(res, 422, "Invalid event id");
@@ -199,23 +248,18 @@ exports.getEvent = async (req, res, next) => {
 
     if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
 
-    if (!req.user && doc.status !== "published") return bad(res, 403, "Forbidden");
-
-    // Dept admin can read any event in their department
-    if (req.user?.role === "department_admin") {
+    if (req.user.role === "department_admin") {
       const sameDept = String(doc.department?._id || doc.department) === String(req.user.department || "");
       if (!sameDept) return bad(res, 403, "Forbidden");
     }
+    // super_admin can read any
 
-    return res.status(200).json({ success: true, data: doc });
-  } catch (err) {
-    logger.error("getEvent error", { error: err.message });
-    next(err);
-  }
+    res.status(200).json({ success: true, data: doc });
+  } catch (err) { next(err); }
 };
 
 /* -------------------------------- UPDATE ------------------------------- */
-// Dept admin can update any event in their department; super admin can update all
+// Dept admin: update any event in their department; super admin: update all
 exports.updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params || {};
