@@ -4,38 +4,38 @@ const openapi = {
   info: {
     title: "Symposium API",
     version: "1.0.0",
-    description:
-      [
-        "REST API for the Symposium app with Google OAuth, role-based access control (RBAC), API key gating, pagination, and versioned routes.",
-        "",
-        "## Content Type & Headers",
-        "- All endpoints **accept and return JSON** only.",
-        "- Always send:",
-        "  - `Content-Type: application/json` (for requests with a body)",
-        "  - `Accept: application/json`",
-        "  - `x-api-key: <your_api_key>` for all `/api/*` endpoints (required).",
-        "",
-        "## Authorization",
-        "- **API Key** (required for all `/api/*`):",
-        "  - Header: `x-api-key: rjfqrur9L0v2XNzx574DI1Djejii70JP5S` (example).",
-        "- **JWT Bearer Token** (required for protected routes):",
-        "  - Header: `Authorization: Bearer <JWT_FROM_/auth/login_OR_/auth/google>`",
-        "  - Token expires in 12h.",
-        "",
-        "## Roles",
-        "- `super_admin`: full system access.",
-        "- `department_admin`: access scoped to own department; can create **users** only.",
-        "- `user`: access to own resources.",
-        "",
-        "## Versioning",
-        "- All endpoints are under `/api/v1/...`.",
-      ].join("\n"),
+    description: [
+      "REST API for the Symposium app with Google OAuth, role-based access control (RBAC), API key gating, pagination, and versioned routes.",
+      "",
+      "## Content Type & Headers",
+      "- All endpoints **accept and return JSON** only.",
+      "- Always send:",
+      "  - `Content-Type: application/json` (for requests with a body)",
+      "  - `Accept: application/json`",
+      "  - `x-api-key: <your_api_key>` for all `/api/*` endpoints (required).",
+      "",
+      "## Authorization",
+      "- **API Key** (required for all `/api/*`):",
+      "  - Header: `x-api-key: rjfqrur9L0v2XNzx574DI1Djejii70JP5S` (example).",
+      "- **JWT Bearer Token** (required for protected routes):",
+      "  - Header: `Authorization: Bearer <JWT_FROM_/auth/login_OR_/auth/google>`",
+      "  - Token expires in 12h.",
+      "",
+      "## Roles",
+      "- `super_admin`: full system access.",
+      "- `department_admin`: access scoped to own department; can create **users** and **events** for their department.",
+      "- `user`: access to own resources; can read published events.",
+      "",
+      "## Versioning",
+      "- All endpoints are under `/api/v1/...`.",
+    ].join("\n"),
     contact: { name: "EGSPEC", url: "https://www.egspec.org" }
   },
   servers: [{ url: "http://localhost:8000", description: "Local" }],
   tags: [
     { name: "Auth", description: "Authentication & Session (requires x-api-key; some also require JWT)" },
     { name: "Users", description: "User CRUD (admin-only). Requires x-api-key + Bearer JWT." },
+    { name: "Events", description: "Event CRUD & public listing. Read requires x-api-key; write requires JWT + role." },
     { name: "Health", description: "Service health (no API key/JWT required by default)." }
   ],
   components: {
@@ -54,6 +54,7 @@ const openapi = {
       }
     },
     schemas: {
+      /* ===== Common / Existing ===== */
       ErrorResponse: {
         type: "object",
         properties: {
@@ -175,6 +176,120 @@ const openapi = {
           departmentId: { type: "string", nullable: true },
           isActive: { type: "boolean" }
         }
+      },
+
+      /* ====== EVENTS ====== */
+      EventContact: {
+        type: "object",
+        properties: {
+          name: { type: "string", example: "Raghavan" },
+          phone: { type: "string", example: "+91-9000000000" },
+          email: { type: "string", example: "raghavan@egspec.org" }
+        }
+      },
+      EventOnline: {
+        type: "object",
+        properties: {
+          provider: { type: "string", enum: ["google_meet", "zoom", "other"], example: "google_meet" },
+          url: { type: "string", example: "https://meet.google.com/abc-defg-hij" }
+        }
+      },
+      EventOffline: {
+        type: "object",
+        properties: {
+          venueName: { type: "string", example: "Main Auditorium" },
+          address: { type: "string", example: "EGSPEC Campus, Nagapattinam" },
+          mapLink: { type: "string", example: "https://maps.google.com/?q=EGSPEC" }
+        }
+      },
+      EventPayment: {
+        type: "object",
+        properties: {
+          method: { type: "string", enum: ["none", "gateway", "qr"], example: "gateway" },
+          gatewayProvider: { type: "string", example: "razorpay" },
+          gatewayLink: { type: "string", example: "https://rzp.io/i/xyz123" },
+          price: { type: "number", example: 199 },
+          currency: { type: "string", example: "INR" },
+          qrImageUrl: { type: "string", example: "https://cdn.egspec.org/pay/qr.jpg" },
+          qrInstructions: { type: "string", example: "Pay and upload screenshot in registration form" },
+          allowScreenshot: { type: "boolean", example: true }
+        }
+      },
+      Event: {
+        type: "object",
+        properties: {
+          _id: { type: "string", example: "66f5a81e3f65bb57b8c84e91" },
+          name: { type: "string", example: "AI Symposium 2025" },
+          slug: { type: "string", example: "ai-symposium-2025-abcd" },
+          description: { type: "string", example: "Deep dive into AI & Data Science." },
+          thumbnailUrl: { type: "string", example: "https://cdn.egspec.org/events/ai-thumb.jpg" },
+          mode: { type: "string", enum: ["online", "offline"], example: "online" },
+          online: { $ref: "#/components/schemas/EventOnline" },
+          offline: { $ref: "#/components/schemas/EventOffline" },
+          startAt: { type: "string", format: "date-time", example: "2025-11-21T09:30:00.000Z" },
+          endAt: { type: "string", format: "date-time", example: "2025-11-21T12:30:00.000Z" },
+          department: {
+            oneOf: [
+              { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" },
+              { $ref: "#/components/schemas/Department" }
+            ]
+          },
+          createdBy: {
+            oneOf: [
+              { type: "string", example: "65015a71b05c3495bc6e5b5c" },
+              { $ref: "#/components/schemas/User" }
+            ]
+          },
+          payment: { $ref: "#/components/schemas/EventPayment" },
+          contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
+          departmentSite: { type: "string", example: "https://cse.egspec.org/sympo" },
+          contactEmail: { type: "string", example: "sympo@egspec.org" },
+          extra: { type: "object", additionalProperties: true, example: { tracks: ["Vision", "NLP"] } },
+          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" }
+        }
+      },
+      CreateEventRequest: {
+        type: "object",
+        required: ["name", "mode", "startAt", "endAt", "departmentId"],
+        properties: {
+          name: { type: "string", example: "AI Symposium 2025" },
+          description: { type: "string", example: "Deep dive into AI & Data Science." },
+          thumbnailUrl: { type: "string", example: "https://cdn.egspec.org/events/ai-thumb.jpg" },
+          mode: { type: "string", enum: ["online", "offline"], example: "online" },
+          online: { $ref: "#/components/schemas/EventOnline" },
+          offline: { $ref: "#/components/schemas/EventOffline" },
+          startAt: { type: "string", format: "date-time", example: "2025-11-21T09:30:00.000Z" },
+          endAt: { type: "string", format: "date-time", example: "2025-11-21T12:30:00.000Z" },
+          departmentId: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" },
+          payment: { $ref: "#/components/schemas/EventPayment" },
+          contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
+          departmentSite: { type: "string", example: "https://cse.egspec.org/sympo" },
+          contactEmail: { type: "string", example: "sympo@egspec.org" },
+          extra: { type: "object", example: { tracks: ["Vision", "NLP"] } },
+          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" }
+        }
+      },
+      UpdateEventRequest: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          description: { type: "string" },
+          thumbnailUrl: { type: "string" },
+          mode: { type: "string", enum: ["online", "offline"] },
+          online: { $ref: "#/components/schemas/EventOnline" },
+          offline: { $ref: "#/components/schemas/EventOffline" },
+          startAt: { type: "string", format: "date-time" },
+          endAt: { type: "string", format: "date-time" },
+          payment: { $ref: "#/components/schemas/EventPayment" },
+          contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
+          departmentSite: { type: "string" },
+          contactEmail: { type: "string" },
+          extra: { type: "object" },
+          status: { type: "string", enum: ["draft", "published", "cancelled"] }
+        }
       }
     },
     parameters: {
@@ -185,7 +300,12 @@ const openapi = {
       Role: { name: "role", in: "query", schema: { type: "string", enum: ["super_admin", "department_admin", "user"] } },
       DepartmentId: { name: "departmentId", in: "query", schema: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" } },
       IsActive: { name: "isActive", in: "query", schema: { type: "boolean" } },
-      UserId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "65015a71b05c3495bc6e5b5c" }
+      UserId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "65015a71b05c3495bc6e5b5c" },
+
+      /* Events */
+      EventId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "66f5a81e3f65bb57b8c84e91" },
+      EventStatus: { name: "status", in: "query", schema: { type: "string", enum: ["draft", "published", "cancelled"] } },
+      EventUpcoming: { name: "upcoming", in: "query", schema: { type: "string", enum: ["true", "false"], example: "true" } }
     }
   },
 
@@ -198,7 +318,7 @@ const openapi = {
         tags: ["Health"],
         summary: "Service health",
         description: "No headers required. Returns API health info.",
-        security: [], // open
+        security: [],
         responses: {
           "200": {
             description: "OK",
@@ -220,14 +340,12 @@ const openapi = {
     },
 
     /* =================== AUTH =================== */
-
     "/api/v1/auth/register": {
       post: {
         tags: ["Auth"],
         summary: "Register a normal user (role = user)",
         description:
-          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\n" +
-          "No Bearer token required.",
+          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\nNo Bearer token required.",
         requestBody: {
           required: true,
           content: {
@@ -247,10 +365,7 @@ const openapi = {
           }
         },
         responses: {
-          "201": {
-            description: "Created",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/TokenResponse" } } }
-          },
+          "201": { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/TokenResponse" } } } },
           "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
@@ -261,8 +376,7 @@ const openapi = {
         tags: ["Auth"],
         summary: "Login with email/password",
         description:
-          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\n" +
-          "No Bearer token required. Returns a JWT token to be sent as `Authorization: Bearer <token>` in subsequent requests.",
+          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\nNo Bearer token required. Returns a JWT token to be sent as `Authorization: Bearer <token>` in subsequent requests.",
         requestBody: {
           required: true,
           content: {
@@ -284,8 +398,7 @@ const openapi = {
         tags: ["Auth"],
         summary: "Login/Register with Google ID Token",
         description:
-          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\n" +
-          "No Bearer token required. Send `idToken` from Google Identity Services; backend verifies it and returns a JWT.",
+          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\nNo Bearer token required. Send `idToken` from Google Identity Services; backend verifies it and returns a JWT.",
         requestBody: {
           required: true,
           content: {
@@ -306,8 +419,7 @@ const openapi = {
       get: {
         tags: ["Auth"],
         summary: "Get current user",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
+        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         responses: {
           "200": {
@@ -330,25 +442,22 @@ const openapi = {
       post: {
         tags: ["Auth"],
         summary: "Logout (client clears token)",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
+        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         responses: { "200": { description: "OK" } }
       }
     },
 
     /* =================== USERS (ADMIN) =================== */
-
     "/api/v1/auth/users": {
       post: {
         tags: ["Users"],
         summary: "Create a user (admin only).",
-        description:
-          [
-            "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-            "- **super_admin**: can create any role. If creating `department_admin`, `departmentId` is **required**.",
-            "- **department_admin**: can create **role = user** only; department is forced to creator’s department.",
-          ].join("\n"),
+        description: [
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
+          "- **super_admin**: can create any role. If creating `department_admin`, `departmentId` is **required**.",
+          "- **department_admin**: can create **role = user** only; department is forced to creator’s department."
+        ].join("\n"),
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         requestBody: {
           required: true,
@@ -396,8 +505,7 @@ const openapi = {
         tags: ["Users"],
         summary: "List users (admin only) with pagination & filtering",
         description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.\n" +
-          "Supports `page`, `limit`, `sort`, `role`, `departmentId`, `q`, `isActive`.",
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.\nSupports `page`, `limit`, `sort`, `role`, `departmentId`, `q`, `isActive`.",
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         parameters: [
           { $ref: "#/components/parameters/Page" },
@@ -433,8 +541,7 @@ const openapi = {
       get: {
         tags: ["Users"],
         summary: "Get user by id (scoped by role)",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
+        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         parameters: [{ $ref: "#/components/parameters/UserId" }],
         responses: {
@@ -448,13 +555,12 @@ const openapi = {
       patch: {
         tags: ["Users"],
         summary: "Update user (partial)",
-        description:
-          [
-            "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-            "- **super_admin**: can change role/department/isActive.",
-            "- **department_admin**: cannot change roles or move users across departments.",
-            "- **user**: can update own name/password.",
-          ].join("\n"),
+        description: [
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
+          "- **super_admin**: can change role/department/isActive.",
+          "- **department_admin**: cannot change roles or move users across departments.",
+          "- **user**: can update own name/password."
+        ].join("\n"),
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         parameters: [{ $ref: "#/components/parameters/UserId" }],
         requestBody: {
@@ -469,12 +575,122 @@ const openapi = {
       delete: {
         tags: ["Users"],
         summary: "Soft delete user (isActive=false)",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
+        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
         security: [{ ApiKeyHeader: [], BearerAuth: [] }],
         parameters: [{ $ref: "#/components/parameters/UserId" }],
         responses: {
           "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+
+    /* =================== EVENTS =================== */
+    "/api/v1/events": {
+      get: {
+        tags: ["Events"],
+        summary: "List events (public read with API key; JWT optional)",
+        description: [
+          "- Headers required: `x-api-key`, `Accept: application/json`.",
+          "- If **no JWT**, only `published` events are returned.",
+          "- If **department_admin** (JWT), listing is scoped to own department by default (or pass `departmentId` matching own dept).",
+          "- If **super_admin** (JWT), can list all or filter by `departmentId`.",
+          "- Filters: `page`, `limit`, `sort` (e.g. `-startAt`), `departmentId`, `status`, `q`, `upcoming=true`."
+        ].join("\n"),
+        parameters: [
+          { $ref: "#/components/parameters/Page" },
+          { $ref: "#/components/parameters/Limit" },
+          { name: "sort", in: "query", schema: { type: "string", example: "-startAt" } },
+          { $ref: "#/components/parameters/DepartmentId" },
+          { $ref: "#/components/parameters/EventStatus" },
+          { name: "q", in: "query", schema: { type: "string", example: "AI" } },
+          { $ref: "#/components/parameters/EventUpcoming" }
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    meta: { $ref: "#/components/schemas/PaginationMeta" },
+                    data: { type: "array", items: { $ref: "#/components/schemas/Event" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        tags: ["Events"],
+        summary: "Create event (department_admin or super_admin)",
+        description: [
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
+          "- **department_admin**: can create only for **own** department (`departmentId` must match).",
+          "- **super_admin**: can create for any department."
+        ].join("\n"),
+        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateEventRequest" } } }
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } }
+          },
+          "403": { description: "Forbidden (scope/role)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+
+    "/api/v1/events/{id}": {
+      get: {
+        tags: ["Events"],
+        summary: "Get event by id",
+        description: [
+          "Headers required: `x-api-key`, `Accept: application/json`.",
+          "- Public readers (no JWT) can only access `published` events.",
+          "- **department_admin** can only access events of their own department.",
+          "- **super_admin** can access any."
+        ].join("\n"),
+        parameters: [{ $ref: "#/components/parameters/EventId" }],
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      patch: {
+        tags: ["Events"],
+        summary: "Update event (partial) — department_admin (own) or super_admin",
+        description:
+          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
+        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        parameters: [{ $ref: "#/components/parameters/EventId" }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateEventRequest" } } }
+        },
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      },
+      delete: {
+        tags: ["Events"],
+        summary: "Delete event (soft delete) — department_admin (own) or super_admin",
+        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
+        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        parameters: [{ $ref: "#/components/parameters/EventId" }],
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     }
