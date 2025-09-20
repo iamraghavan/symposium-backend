@@ -10,5 +10,6 @@ const router = express.Router();
 router.use("/auth", require("../authRoutes"));
 router.use("/events", require("../eventRoutes"));
 router.use("/departments", require("../departmentRoutes"));
+router.use("/registrations", require("../registrationRoutes")); 
 
 module.exports = router;

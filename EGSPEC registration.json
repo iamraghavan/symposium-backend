@@ -1,0 +1,242 @@
+{
+  "info": {
+    "name": "EGSPEC Auth + Registrations",
+    "_postman_id": "5f6b9a40-2b3e-4cd4-9d5a-0c5c3f5c2abc",
+    "description": "Google login + Event registrations (individual/team). All /api/* calls require x-api-key. For user-facing flows we use global_api_key + Bearer JWT. For admin payment verification, use admin_api_key (global or dept-admin per-user key).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0) Health",
+      "request": { "method": "GET", "header": [], "url": "{{base_url}}/health" }
+    },
+    {
+      "name": "1) Auth (Google)",
+      "item": [
+        {
+          "name": "Google Login (idToken → JWT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.code === 200);",
+                  "const json = pm.response.json();",
+                  "pm.environment.set('user_jwt', json.token || '');",
+                  "pm.environment.set('user_email', (json.user && json.user.email) || pm.environment.get('user_email') || '');",
+                  "pm.environment.set('user_id', (json.user && json.user._id) || '');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{global_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"{{user_idToken}}\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/auth/google"
+          }
+        },
+        {
+          "name": "Me (via JWT + x-api-key)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "url": "{{base_url}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Logout (client clears token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "url": "{{base_url}}/api/v1/auth/logout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2) Registrations",
+      "item": [
+        {
+          "name": "Create (FREE, Individual)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.code === 201);",
+                  "const json = pm.response.json();",
+                  "pm.environment.set('reg_free_id', json.data?._id || '');",
+                  "pm.environment.set('last_reg_id', json.data?._id || '');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_free_id}}\",\n  \"type\": \"individual\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/registrations"
+          }
+        },
+        {
+          "name": "Create (QR, Team)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.code === 201);",
+                  "const json = pm.response.json();",
+                  "pm.environment.set('reg_qr_id', json.data?._id || '');",
+                  "pm.environment.set('last_reg_id', json.data?._id || '');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_qr_id}}\",\n  \"type\": \"team\",\n  \"team\": {\n    \"name\": \"EEE Champs\",\n    \"members\": [\n      {\"name\": \"Alice\", \"email\": \"alice@egspec.org\"},\n      {\"name\": \"Bob\", \"email\": \"bob@egspec.org\"}\n    ]\n  }\n}"
+            },
+            "url": "{{base_url}}/api/v1/registrations"
+          }
+        },
+        {
+          "name": "Create (Gateway, Individual)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.code === 201);",
+                  "const json = pm.response.json();",
+                  "pm.environment.set('reg_gateway_id', json.data?._id || '');",
+                  "pm.environment.set('gateway_link', (json.hints && json.hints.gatewayLink) || '');",
+                  "pm.environment.set('last_reg_id', json.data?._id || '');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_gateway_id}}\",\n  \"type\": \"individual\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/registrations"
+          }
+        },
+        {
+          "name": "Submit QR Proof (user)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"qrReference\": \"UTR1234567890\",\n  \"qrScreenshotUrl\": \"https://files.example.com/utr.png\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/registrations/{{reg_qr_id}}/payment/qr"
+          }
+        },
+        {
+          "name": "My Registrations",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "url": "{{base_url}}/api/v1/registrations/my?limit=20"
+          }
+        },
+        {
+          "name": "Get Registration by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-api-key", "value": "{{global_api_key}}" },
+              { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+            ],
+            "url": "{{base_url}}/api/v1/registrations/{{last_reg_id}}"
+          }
+        },
+        {
+          "name": "Admin Verify Payment (paid → confirmed)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paid\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/registrations/{{reg_qr_id}}/verify-payment"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+
+    { "key": "global_api_key", "value": "rjfqrur9L0v2XNzx574DI1Djejii70JP5S" },
+    { "key": "admin_api_key", "value": "{{global_api_key}}" },
+
+    { "key": "user_idToken", "value": "" },
+    { "key": "user_jwt", "value": "" },
+    { "key": "user_email", "value": "" },
+    { "key": "user_id", "value": "" },
+
+    { "key": "event_free_id", "value": "" },
+    { "key": "event_qr_id", "value": "" },
+    { "key": "event_gateway_id", "value": "" },
+
+    { "key": "reg_free_id", "value": "" },
+    { "key": "reg_qr_id", "value": "" },
+    { "key": "reg_gateway_id", "value": "" },
+    { "key": "last_reg_id", "value": "" },
+
+    { "key": "gateway_link", "value": "" }
+  ]
+}
