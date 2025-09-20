@@ -6,7 +6,7 @@ const openapi = {
     description:
       "Authentication, Departments & Events endpoints secured via **x-api-key** (global or per-user).\n" +
       "Google sign-in returns a per-user API key (plaintext, shown once). Email/password login may still return JWT for legacy clients.",
-    version: "1.2.0"
+    version: "1.3.0"
   },
   servers: [{ url: "http://localhost:8000", description: "Local" }],
   tags: [
@@ -15,7 +15,8 @@ const openapi = {
     { name: "Admin Users" },
     { name: "API Keys" },
     { name: "Departments" },
-    { name: "Events" }
+    { name: "Events" },
+    { name: "Registrations" } // ⬅️ NEW
   ],
   components: {
     securitySchemes: {
@@ -358,7 +359,6 @@ const openapi = {
           status: { type: "string", enum: ["draft", "published", "cancelled"] }
         }
       },
-      ListDepartmentsResponse: { $ref: "#/components/schemas/ListDepartmentsResponse" },
       ListEventsResponse: {
         type: "object",
         properties: {
@@ -373,6 +373,144 @@ const openapi = {
             }
           },
           data: { type: "array", items: { $ref: "#/components/schemas/Event" } }
+        }
+      },
+
+      /* ===== Registrations (NEW) ===== */
+      Registration: {
+        type: "object",
+        properties: {
+          _id: { type: "string", example: "68d0123a7aa1c0f93a1b2c3d" },
+          event: { type: "string", example: "68cf10d3b9b9d2a86f7a1a23" },
+          user: { type: "string", example: "68ce30aa8ac6618c45bfb533" },
+          type: { type: "string", enum: ["individual", "team"], example: "individual" },
+          team: {
+            type: "object",
+            nullable: true,
+            properties: {
+              name: { type: "string", nullable: true, example: "Ohm's Avengers" },
+              size: { type: "integer", example: 3 },
+              members: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string", example: "Priya" },
+                    email: { type: "string", example: "priya@example.com" }
+                  }
+                }
+              }
+            }
+          },
+          status: { type: "string", enum: ["pending", "confirmed", "cancelled"], example: "pending" },
+          payment: {
+            type: "object",
+            properties: {
+              method: { type: "string", enum: ["none", "gateway", "qr"], example: "qr" },
+              currency: { type: "string", example: "INR" },
+              amount: { type: "number", example: 99 },
+              status: { type: "string", enum: ["none", "pending", "paid", "failed"], example: "pending" },
+              gatewayProvider: { type: "string", nullable: true, example: "razorpay" },
+              gatewayLink: { type: "string", nullable: true },
+              gatewayOrderId: { type: "string", nullable: true },
+              gatewayPaymentId: { type: "string", nullable: true },
+              gatewaySignature: { type: "string", nullable: true },
+              qrReference: { type: "string", nullable: true, example: "UTR123456" },
+              qrScreenshotUrl: { type: "string", nullable: true },
+              verifiedAt: { type: "string", format: "date-time", nullable: true },
+              verifiedBy: { type: "string", nullable: true }
+            }
+          },
+          notes: { type: "string", nullable: true },
+          eventName: { type: "string", example: "EEE Symposium 2025" },
+          userEmail: { type: "string", example: "student@example.com" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" }
+        }
+      },
+      CreateRegistrationRequest: {
+        type: "object",
+        required: ["eventId", "type"],
+        properties: {
+          eventId: { type: "string", example: "68ce8ee515adf4cdbc226fb9" },
+          type: { type: "string", enum: ["individual", "team"], example: "individual" },
+          team: {
+            type: "object",
+            nullable: true,
+            properties: {
+              name: { type: "string", nullable: true },
+              members: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["name", "email"],
+                  properties: {
+                    name: { type: "string" },
+                    email: { type: "string" }
+                  }
+                }
+              }
+            }
+          },
+          notes: { type: "string", nullable: true }
+        }
+      },
+      CreateRegistrationResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          data: { $ref: "#/components/schemas/Registration" },
+          hints: {
+            type: "object",
+            description: "Next-step hint based on payment method",
+            oneOf: [
+              { type: "object", properties: { next: { type: "string", example: "confirmed" } } },
+              { type: "object", properties: {
+                  next: { type: "string", example: "pay_gateway" },
+                  gatewayLink: { type: "string" },
+                  provider: { type: "string" }
+              }},
+              { type: "object", properties: { next: { type: "string", example: "submit_qr_proof" } } }
+            ]
+          }
+        }
+      },
+      ListMyRegistrationsResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          meta: {
+            type: "object",
+            properties: {
+              total: { type: "integer", example: 2 },
+              page: { type: "integer", example: 1 },
+              limit: { type: "integer", example: 20 },
+              hasMore: { type: "boolean", example: false }
+            }
+          },
+          data: { type: "array", items: { $ref: "#/components/schemas/Registration" } }
+        }
+      },
+      SingleRegistrationResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          data: { $ref: "#/components/schemas/Registration" }
+        }
+      },
+      SubmitQrProofRequest: {
+        type: "object",
+        required: ["qrReference"],
+        properties: {
+          qrReference: { type: "string", example: "UTR987654321" },
+          qrScreenshotUrl: { type: "string", nullable: true }
+        }
+      },
+      VerifyPaymentRequest: {
+        type: "object",
+        required: ["status"],
+        properties: {
+          status: { type: "string", enum: ["paid", "failed"], example: "paid" }
         }
       }
     }
@@ -819,6 +957,101 @@ const openapi = {
           403: { description: "Forbidden (wrong department scope)" },
           404: { description: "Not found" },
           422: { description: "Invalid event id" }
+        }
+      }
+    },
+
+    /* ===== Registrations (NEW) ===== */
+    "/api/v1/registrations": {
+      post: {
+        tags: ["Registrations"],
+        summary: "Create a registration (individual or team)",
+        description:
+          "Requires **per-user x-api-key** (Google login).\n" +
+          "- If event payment.method = `none` ⇒ registration is auto **confirmed**.\n" +
+          "- If `gateway` ⇒ client should redirect to `hints.gatewayLink`.\n" +
+          "- If `qr` ⇒ client should call **Submit QR payment proof**.",
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRegistrationRequest" } } }
+        },
+        responses: {
+          201: { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRegistrationResponse" } } } },
+          401: { description: "Unauthorized (x-api-key missing/invalid)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          403: { description: "Only Google users can register", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          404: { description: "Event not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          409: { description: "Duplicate registration", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/registrations/my": {
+      get: {
+        tags: ["Registrations"],
+        summary: "List my registrations",
+        description: "Requires **per-user x-api-key** (Google login).",
+        parameters: [
+          { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", schema: { type: "integer", default: 20 } }
+        ],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListMyRegistrationsResponse" } } } },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/registrations/{id}": {
+      get: {
+        tags: ["Registrations"],
+        summary: "Get a registration by id (owner or admins)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SingleRegistrationResponse" } } } },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          403: { description: "Forbidden (not owner/admin)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          404: { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Invalid id", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/registrations/{id}/payment/qr": {
+      post: {
+        tags: ["Registrations"],
+        summary: "Submit QR payment proof (owner)",
+        description: "Attach UPI/QR UTR reference and optional screenshot URL. Requires **per-user x-api-key**.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/SubmitQrProofRequest" } } }
+        },
+        responses: {
+          200: {
+            description: "Submitted; awaiting admin verification",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } }
+          },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          403: { description: "Forbidden (not owner)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          404: { description: "Registration not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Invalid id or payment method not QR", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/registrations/{id}/verify-payment": {
+      patch: {
+        tags: ["Registrations"],
+        summary: "Admin: verify QR/gateway payment",
+        description: "Role **super_admin** or **department_admin** of the event’s department.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/VerifyPaymentRequest" } } }
+        },
+        responses: {
+          200: { description: "Updated", content: { "application/json": { schema: { $ref: "#/components/schemas/SingleRegistrationResponse" } } } },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          403: { description: "Forbidden (wrong scope/role)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          404: { description: "Registration not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Invalid id or status", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     }
