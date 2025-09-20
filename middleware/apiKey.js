@@ -12,14 +12,19 @@ async function apiKeyGate(req, res, next) {
     });
   }
 
-  // ✅ 1) Allow GLOBAL API KEY and attach synthetic super_admin principal
+  // 1) Allow GLOBAL API KEY and attach synthetic super_admin principal (for public/auth/admin ops)
   if (presented === process.env.API_KEY) {
     req.apiKeyType = "global";
-    req.user = { _id: "env-super-admin", role: "super_admin", name: "Env Super Admin" }; // <-- important
+    req.user = {
+      _id: "env-super-admin",
+      role: "super_admin",
+      name: "Env Super Admin",
+      provider: "system"
+    };
     return next();
   }
 
-  // ✅ 2) Per-user API key (hashed lookup)
+  // 2) Per-user API key (hashed lookup)
   try {
     const prefix = presented.slice(0, 8);
     const hash = crypto.createHash("sha256").update(presented, "utf8").digest("hex");
@@ -29,7 +34,9 @@ async function apiKeyGate(req, res, next) {
       apiKeyHash: hash,
       apiKeyRevoked: false,
       isActive: true
-    }).select("_id name email role department");
+    })
+      // ⬇️ IMPORTANT: include provider so registrations can enforce Google-only
+      .select("_id name email role department provider emailVerified picture");
 
     if (!user) {
       return res.status(403).json({
@@ -39,9 +46,11 @@ async function apiKeyGate(req, res, next) {
       });
     }
 
-    req.user = user;               // <-- so authorize(...) works
+    req.user = user; // authorize(...) & controllers read req.user.provider now
     req.apiKeyType = "user";
-    await User.updateOne({ _id: user._id }, { apiKeyLastUsedAt: new Date() });
+
+    // best-effort last-used ping (non-blocking for request)
+    User.updateOne({ _id: user._id }, { apiKeyLastUsedAt: new Date() }).catch(() => {});
 
     return next();
   } catch (err) {
@@ -54,4 +63,4 @@ async function apiKeyGate(req, res, next) {
   }
 }
 
-module.exports = apiKeyGate; // <-- fix export
+module.exports = apiKeyGate;

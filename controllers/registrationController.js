@@ -27,11 +27,14 @@ exports.create = async (req, res, next) => {
 
     if (!actor) return bad(res, 401, "Unauthorized");
     if (actor.provider !== "google") {
-      return bad(res, 403, "Registration requires Google login.");
+      // ⬇️ single-line, clear message
+      return bad(res, 403, "Registration requires Google login");
     }
 
     if (!isObjectId(eventId)) return bad(res, 422, "Invalid eventId");
-    if (!["individual", "team"].includes(type)) return bad(res, 422, "type must be 'individual' or 'team'");
+    if (!["individual", "team"].includes(type)) {
+      return bad(res, 422, "type must be 'individual' or 'team'");
+    }
 
     const ev = await Event.findById(eventId).lean();
     if (!ev || !ev.isActive) return bad(res, 404, "Event not found");
@@ -53,7 +56,6 @@ exports.create = async (req, res, next) => {
       status: ev.payment?.method === "none" ? "none" : "pending",
       gatewayProvider: ev.payment?.gatewayProvider,
       gatewayLink: ev.payment?.gatewayLink
-      // gatewayOrderId/paymentId/signature remain empty for now
     };
 
     // Team validation
@@ -62,17 +64,19 @@ exports.create = async (req, res, next) => {
       if (!team || !Array.isArray(team.members) || team.members.length < 1) {
         return bad(res, 422, "Team registrations require at least 1 member (besides the leader)");
       }
-      const cleanMembers = team.members.map((m) => ({
-        name: String(m.name || "").trim(),
-        email: String(m.email || "").toLowerCase().trim()
-      })).filter(m => m.name && m.email);
+      const cleanMembers = team.members
+        .map((m) => ({
+          name: String(m.name || "").trim(),
+          email: String(m.email || "").toLowerCase().trim()
+        }))
+        .filter((m) => m.name && m.email);
 
       if (cleanMembers.length !== team.members.length) {
         return bad(res, 422, "Each team member must have name and email");
       }
 
       // De-dupe member emails and ensure leader's email is not listed as member
-      const emails = new Set(cleanMembers.map(m => m.email));
+      const emails = new Set(cleanMembers.map((m) => m.email));
       if (emails.has(String(actor.email).toLowerCase())) {
         return bad(res, 422, "Leader cannot also be listed as a team member");
       }
@@ -116,7 +120,6 @@ exports.create = async (req, res, next) => {
 
 /**
  * GET /api/v1/registrations/my
- * List registrations for current user
  */
 exports.listMine = async (req, res, next) => {
   try {
@@ -148,7 +151,6 @@ exports.listMine = async (req, res, next) => {
 
 /**
  * GET /api/v1/registrations/:id
- * Owner can view; super_admin or department_admin of the event's department can view.
  */
 exports.getById = async (req, res, next) => {
   try {
@@ -173,7 +175,6 @@ exports.getById = async (req, res, next) => {
       return res.status(200).json({ success: true, data: reg });
     }
     if (role === "department_admin") {
-      // load event’s department for scope check if not populated fully
       const deptId = String(reg.event?.department || "");
       if (deptId && String(req.user.department || "") === deptId) {
         return res.status(200).json({ success: true, data: reg });
@@ -188,8 +189,6 @@ exports.getById = async (req, res, next) => {
 
 /**
  * POST /api/v1/registrations/:id/payment/qr
- * Body: { qrReference, qrScreenshotUrl? }
- * User can attach QR UTR/reference & screenshot for admins to verify.
  */
 exports.submitQrProof = async (req, res, next) => {
   try {
@@ -207,7 +206,6 @@ exports.submitQrProof = async (req, res, next) => {
 
     reg.payment.qrReference = String(qrReference).trim();
     if (typeof qrScreenshotUrl === "string") reg.payment.qrScreenshotUrl = qrScreenshotUrl.trim();
-    // remains pending until admin verifies
     await reg.save();
 
     return res.status(200).json({ success: true, message: "QR details submitted; awaiting verification." });
@@ -218,9 +216,6 @@ exports.submitQrProof = async (req, res, next) => {
 
 /**
  * PATCH /api/v1/registrations/:id/verify-payment
- * Admin only (super_admin or department_admin owning the event department)
- * Body: { status: "paid" | "failed" }
- * When set to "paid": payment.verifiedAt/by set, registration.status => confirmed
  */
 exports.adminVerifyPayment = async (req, res, next) => {
   try {
@@ -230,17 +225,23 @@ exports.adminVerifyPayment = async (req, res, next) => {
     const reg = await Registration.findById(id).populate("event", "department");
     if (!reg) return bad(res, 404, "Registration not found");
 
-    // scope
     const role = req.user?.role;
     if (role !== "super_admin" && role !== "department_admin") return bad(res, 403, "Forbidden");
-    if (role === "department_admin" &&
-        String(req.user.department || "") !== String(reg.event?.department || "")) {
+    if (
+      role === "department_admin" &&
+      String(req.user.department || "") !== String(reg.event?.department || "")
+    ) {
       return bad(res, 403, "Forbidden");
     }
 
-    if (reg.payment.method === "none") return bad(res, 422, "Free registration does not require verification");
+    if (reg.payment.method === "none") {
+      return bad(res, 422, "Free registration does not require verification");
+    }
+
     const { status } = req.body || {};
-    if (!["paid", "failed"].includes(status)) return bad(res, 422, "status must be 'paid' or 'failed'");
+    if (!["paid", "failed"].includes(status)) {
+      return bad(res, 422, "status must be 'paid' or 'failed'");
+    }
 
     reg.payment.status = status;
     if (status === "paid") {
@@ -248,7 +249,7 @@ exports.adminVerifyPayment = async (req, res, next) => {
       reg.payment.verifiedBy = req.user._id;
       reg.status = "confirmed";
     } else {
-      reg.status = "pending"; // keep pending; or set 'cancelled' if you prefer
+      reg.status = "pending"; // (or set 'cancelled' if that’s your policy)
     }
     await reg.save();
 
