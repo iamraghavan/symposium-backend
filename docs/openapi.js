@@ -4,13 +4,11 @@ const openapi = {
   info: {
     title: "EGSPEC API",
     description:
-      "Authentication, Departments & Events endpoints secured via **x-api-key** (global or per-user). " +
-      "Admin creation returns a per-user API key (shown once). Login can return stored admin apiKey if available.",
-    version: "1.1.0"
+      "Authentication, Departments & Events endpoints secured via **x-api-key** (global or per-user).\n" +
+      "Google sign-in returns a per-user API key (plaintext, shown once). Email/password login may still return JWT for legacy clients.",
+    version: "1.2.0"
   },
-  servers: [
-    { url: "http://localhost:8000", description: "Local" }
-  ],
+  servers: [{ url: "http://localhost:8000", description: "Local" }],
   tags: [
     { name: "Health" },
     { name: "Auth" },
@@ -26,43 +24,43 @@ const openapi = {
         in: "header",
         name: "x-api-key",
         description:
-          "Required for **all** /api/* endpoints. Use either:\n" +
-          "- Global key (env: `API_KEY`)\n" +
-          "- Per-user key returned on admin user creation/rotation"
+          "Required for **all** /api/* endpoints.\n" +
+          "- Use the **global** key (server-level) to call public auth endpoints like Google exchange.\n" +
+          "- Use the **per-user** key (returned on Google sign-in/admin create/rotate) to call user-scoped endpoints like /auth/me or registrations."
       }
     },
     schemas: {
-      /* ===== Core User ===== */
+      /* ===== Core ===== */
+      ErrorResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: false },
+          message: { type: "string", example: "Unauthorized" },
+          details: { type: "array", items: { type: "object" }, nullable: true }
+        }
+      },
       User: {
         type: "object",
         properties: {
           _id: { type: "string", example: "68ce30aa8ac6618c45bfb533" },
           name: { type: "string", example: "EEE Department Admin" },
           email: { type: "string", example: "eeeadmin@egspec.org" },
-          role: { type: "string", enum: ["super_admin", "department_admin", "user"] },
+          role: { type: "string", enum: ["super_admin", "department_admin", "user"], example: "user" },
           department: { type: "string", nullable: true, example: "68cd4d6b778a4db47873d869" },
-          provider: { type: "string", enum: ["local", "google"], example: "local" },
+          provider: { type: "string", enum: ["local", "google"], example: "google" },
           picture: { type: "string", nullable: true },
           givenName: { type: "string", nullable: true },
           familyName: { type: "string", nullable: true },
           locale: { type: "string", nullable: true },
-          emailVerified: { type: "boolean", example: false },
+          emailVerified: { type: "boolean", example: true },
           address: { type: "string", nullable: true },
           isActive: { type: "boolean", example: true },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" }
         }
       },
-      ErrorResponse: {
-        type: "object",
-        properties: {
-          success: { type: "boolean", example: false },
-          message: { type: "string", example: "Unauthorized" },
-          code: { type: "string", nullable: true }
-        }
-      },
 
-      /* ===== Auth payloads ===== */
+      /* ===== Auth: email/password ===== */
       LoginRequest: {
         type: "object",
         required: ["email", "password"],
@@ -75,12 +73,12 @@ const openapi = {
         type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          token: { type: "string", description: "JWT (12h)" },
+          token: { type: "string", description: "JWT (12h). Present for email/password flow." },
           user: { $ref: "#/components/schemas/User" },
           apiKey: {
             type: "string",
             nullable: true,
-            description: "Returned for admins if stored or newly minted.",
+            description: "Returned only for admins if stored or newly minted.",
             example: "uk_193f8fbb2bf99e8c494041e67e0aaf8ad299831e"
           }
         }
@@ -100,12 +98,43 @@ const openapi = {
         type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          token: { type: "string" },
+          token: { type: "string", description: "JWT (12h) for email/password flow" },
           user: { $ref: "#/components/schemas/User" }
         }
       },
 
-      /* ===== Admin user management ===== */
+      /* ===== Auth: Google (API key flow) ===== */
+      GoogleIdTokenRequest: {
+        type: "object",
+        required: ["idToken"],
+        properties: {
+          idToken: { type: "string", description: "Google ID token from GSI button" },
+          departmentId: { type: "string", nullable: true },
+          address: { type: "string", nullable: true }
+        }
+      },
+      GoogleCodeVerifyRequest: {
+        type: "object",
+        required: ["code"],
+        properties: {
+          code: { type: "string", description: "Google OAuth authorization code (PKCE/OneTap Code flow)" },
+          redirectUri: { type: "string", nullable: true, description: "Optional override; defaults to server GOOGLE_REDIRECT_URI" }
+        }
+      },
+      GoogleAuthResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          apiKey: {
+            type: "string",
+            description: "Per-user API key (plaintext). Save it now; will not be returned again.",
+            example: "uk_5f3b1b7aa0c24b76d9f0b8c1088a9e6345e1b2d9"
+          },
+          user: { $ref: "#/components/schemas/User" }
+        }
+      },
+
+      /* ===== Admin user mgmt & API keys ===== */
       CreateUserRequest: {
         type: "object",
         required: ["name", "email"],
@@ -166,7 +195,7 @@ const openapi = {
           apiKey: {
             type: "string",
             description: "New per-user API key (plaintext). Save it now.",
-            example: "uk_5f3b1b7aa0c24b76d9f0b8c1088a9e6345e1b2d9"
+            example: "uk_a1b2c3d4e5f6a7b8c9d0e1f22334455667788990"
           }
         }
       },
@@ -178,7 +207,7 @@ const openapi = {
         }
       },
 
-      /* ===== Departments ===== */
+      /* ===== Departments / Events ===== */
       Department: {
         type: "object",
         properties: {
@@ -204,10 +233,10 @@ const openapi = {
       UpdateDepartmentRequest: {
         type: "object",
         properties: {
-          code: { type: "string", example: "EGSPEC/EEE" },
-          name: { type: "string", example: "EEE - Electrical & Electronics" },
-          shortcode: { type: "string", example: "EEE" },
-          isActive: { type: "boolean", example: true }
+          code: { type: "string" },
+          name: { type: "string" },
+          shortcode: { type: "string" },
+          isActive: { type: "boolean" }
         }
       },
       ListDepartmentsResponse: {
@@ -226,8 +255,6 @@ const openapi = {
           data: { type: "array", items: { $ref: "#/components/schemas/Department" } }
         }
       },
-
-      /* ===== Events ===== */
       Event: {
         type: "object",
         properties: {
@@ -285,7 +312,7 @@ const openapi = {
           departmentSite: { type: "string", nullable: true },
           contactEmail: { type: "string", nullable: true },
           extra: { type: "object", additionalProperties: true },
-          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" },
+          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "published" },
           isActive: { type: "boolean", example: true },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" }
@@ -299,21 +326,8 @@ const openapi = {
           description: { type: "string" },
           thumbnailUrl: { type: "string" },
           mode: { type: "string", enum: ["online", "offline"], example: "offline" },
-          online: {
-            type: "object",
-            properties: {
-              provider: { type: "string", example: "other" },
-              url: { type: "string", example: "https://meet.example.com/abc" }
-            }
-          },
-          offline: {
-            type: "object",
-            properties: {
-              venueName: { type: "string", example: "Main Auditorium" },
-              address: { type: "string", example: "EGSPEC Campus" },
-              mapLink: { type: "string", example: "https://maps.example.com/venue" }
-            }
-          },
+          online: { $ref: "#/components/schemas/Event/properties/online" },
+          offline: { $ref: "#/components/schemas/Event/properties/offline" },
           startAt: { type: "string", format: "date-time", example: "2025-10-05T04:30:00.000Z" },
           endAt: { type: "string", format: "date-time", example: "2025-10-05T10:30:00.000Z" },
           departmentId: { type: "string", example: "68cd4d6b778a4db47873d869" },
@@ -344,6 +358,7 @@ const openapi = {
           status: { type: "string", enum: ["draft", "published", "cancelled"] }
         }
       },
+      ListDepartmentsResponse: { $ref: "#/components/schemas/ListDepartmentsResponse" },
       ListEventsResponse: {
         type: "object",
         properties: {
@@ -390,11 +405,11 @@ const openapi = {
       }
     },
 
-    /* ===== Auth ===== */
+    /* ===== Auth (email/password) ===== */
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
-        summary: "Login (email/password) — requires x-api-key gate",
+        summary: "Login (email/password) — gated by x-api-key",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } } },
         responses: {
           200: { description: "Login success", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginResponse" } } } },
@@ -407,7 +422,7 @@ const openapi = {
     "/api/v1/auth/register": {
       post: {
         tags: ["Auth"],
-        summary: "Self register (role=user)",
+        summary: "Self register (role=user) — gated by x-api-key",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterRequest" } } } },
         responses: {
           201: { description: "Registered", content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterResponse" } } } },
@@ -417,10 +432,38 @@ const openapi = {
         }
       }
     },
+
+    /* ===== Auth (Google → API key) ===== */
+    "/api/v1/auth/google": {
+      post: {
+        tags: ["Auth"],
+        summary: "Google sign-in via ID token → returns per-user API key (no JWT)",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleIdTokenRequest" } } } },
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleAuthResponse" } } } },
+          401: { description: "Unauthorized (x-api-key or Google verify failed)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/google/verify": {
+      post: {
+        tags: ["Auth"],
+        summary: "Google OAuth code exchange → id_token → returns per-user API key (no JWT)",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleCodeVerifyRequest" } } } },
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleAuthResponse" } } } },
+          401: { description: "Unauthorized (x-api-key or Google exchange failed)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+
+    /* ===== Session ===== */
     "/api/v1/auth/me": {
       get: {
         tags: ["Auth"],
-        summary: "Current principal (from x-api-key gate)",
+        summary: "Current principal resolved from x-api-key (per-user key)",
         responses: {
           200: {
             description: "Current user",
@@ -440,7 +483,7 @@ const openapi = {
     "/api/v1/auth/logout": {
       post: {
         tags: ["Auth"],
-        summary: "Logout (client clears token)",
+        summary: "Logout (client removes credential; stateless)",
         responses: {
           200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }
         }
@@ -451,7 +494,7 @@ const openapi = {
     "/api/v1/auth/users": {
       post: {
         tags: ["Admin Users"],
-        summary: "Create user (super_admin & department_admin). Returns per-user apiKey.",
+        summary: "Create user (super_admin & department_admin). Returns a per-user apiKey (plaintext).",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserRequest" } } } },
         responses: {
           201: { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserResponse" } } } },
@@ -486,7 +529,14 @@ const openapi = {
         summary: "Get user by id (scoped)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } }
+              }
+            }
+          },
           401: { description: "Unauthorized" },
           403: { description: "Forbidden" },
           404: { description: "Not found" },
@@ -499,7 +549,14 @@ const openapi = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateUserRequest" } } } },
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } }
+              }
+            }
+          },
           401: { description: "Unauthorized" },
           403: { description: "Forbidden" },
           404: { description: "Not found" },
@@ -553,7 +610,7 @@ const openapi = {
     "/api/v1/departments": {
       get: {
         tags: ["Departments"],
-        summary: "List departments (public read with API key). Only active unless super_admin & includeInactive=true",
+        summary: "List departments (requires x-api-key). Only active unless super_admin & includeInactive=true",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 50 } },
@@ -570,7 +627,17 @@ const openapi = {
         summary: "Create department (super_admin)",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateDepartmentRequest" } } } },
         responses: {
-          201: { description: "Created", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          201: {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } }
+                }
+              }
+            }
+          },
           409: { description: "Duplicate code/shortcode" },
           422: { description: "Validation failed" }
         }
@@ -579,13 +646,20 @@ const openapi = {
     "/api/v1/departments/{id}": {
       get: {
         tags: ["Departments"],
-        summary: "Get department by id (public read with API key). Only active unless super_admin & includeInactive=true",
+        summary: "Get department by id (requires x-api-key). Only active unless super_admin & includeInactive=true",
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string" } },
           { name: "includeInactive", in: "query", schema: { type: "boolean" } }
         ],
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } }
+              }
+            }
+          },
           404: { description: "Not found" },
           422: { description: "Invalid department id" }
         }
@@ -596,7 +670,14 @@ const openapi = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateDepartmentRequest" } } } },
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } }
+              }
+            }
+          },
           409: { description: "Duplicate code/shortcode" },
           404: { description: "Not found" },
           422: { description: "Invalid department id" }
@@ -618,7 +699,7 @@ const openapi = {
     "/api/v1/events": {
       get: {
         tags: ["Events"],
-        summary: "Public: list published events only",
+        summary: "Public (requires x-api-key): list published events only",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
@@ -636,7 +717,17 @@ const openapi = {
         summary: "Create event (super_admin or department_admin; dept-admin limited to own department)",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateEventRequest" } } } },
         responses: {
-          201: { description: "Created", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          201: {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } }
+                }
+              }
+            }
+          },
           403: { description: "Forbidden (wrong department scope)" },
           422: { description: "Validation failed" }
         }
@@ -645,10 +736,17 @@ const openapi = {
     "/api/v1/events/{id}": {
       get: {
         tags: ["Events"],
-        summary: "Public: get one event by id (published-only)",
+        summary: "Public (requires x-api-key): get one event by id (published-only)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } }
+              }
+            }
+          },
           403: { description: "Forbidden (not published)" },
           404: { description: "Not found" },
           422: { description: "Invalid event id" }
@@ -656,11 +754,18 @@ const openapi = {
       },
       patch: {
         tags: ["Events"],
-        summary: "Update event (super_admin or department_admin; dept-admin limited to own department)",
+        summary: "Update event (super_admin or department_admin; scoped)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateEventRequest" } } } },
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } }
+              }
+            }
+          },
           403: { description: "Forbidden (wrong department scope)" },
           404: { description: "Not found" },
           422: { description: "Validation failed" }
@@ -681,7 +786,7 @@ const openapi = {
     "/api/v1/events/admin": {
       get: {
         tags: ["Events"],
-        summary: "Admin: list events (ALL statuses). dept_admin limited to own department; super_admin can filter departmentId.",
+        summary: "Admin: list events (ALL statuses). dept_admin limited to own dept; super_admin can filter departmentId.",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
@@ -703,7 +808,14 @@ const openapi = {
         summary: "Admin: get one event (all statuses). dept_admin limited to own department",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          200: {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } }
+              }
+            }
+          },
           403: { description: "Forbidden (wrong department scope)" },
           404: { description: "Not found" },
           422: { description: "Invalid event id" }

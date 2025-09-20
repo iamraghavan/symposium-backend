@@ -1,0 +1,96 @@
+{
+  "info": {
+    "name": "EGSPEC - Google Code Flow Verify",
+    "_postman_id": "f2a0a71b-3d5d-4e5e-a8f4-8e9b7c1c9ab0",
+    "description": "Use Google OAuth Authorization Code -> POST /api/v1/auth/oauth/google/verify -> receive backend JWT -> call /auth/me.\n\nFlow:\n1) Open \"Google Consent (Authorization Code)\". Complete login; Google redirects to the redirect_uri with ?code=...\n2) Copy the code from the URL bar and set env var google_code.\n3) Run \"Verify Code -> Backend JWT\". Tests will store token as user_jwt.\n4) Run \"/auth/me (verify)\" using Authorization: Bearer {{user_jwt}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1) Google Consent (Authorization Code)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://accounts.google.com/o/oauth2/v2/auth?client_id={{google_client_id}}&redirect_uri={{redirect_uri}}&response_type=code&scope=openid%20email%20profile&access_type=offline&prompt=consent&include_granted_scopes=true&state=pm_test",
+          "protocol": "https",
+          "host": ["accounts", "google", "com"],
+          "path": ["o", "oauth2", "v2", "auth"],
+          "query": [
+            { "key": "client_id", "value": "{{google_client_id}}" },
+            { "key": "redirect_uri", "value": "{{redirect_uri}}" },
+            { "key": "response_type", "value": "code" },
+            { "key": "scope", "value": "openid email profile" },
+            { "key": "access_type", "value": "offline" },
+            { "key": "prompt", "value": "consent" },
+            { "key": "include_granted_scopes", "value": "true" },
+            { "key": "state", "value": "pm_test" }
+          ]
+        },
+        "description": "Click **Send**, then click **Open in Browser** (or copy the URL). Complete Google login/consent. Google redirects to {{redirect_uri}} with `?code=...`.\nCopy that `code` and set it into your environment variable **google_code**. Then run the next request."
+      }
+    },
+    {
+      "name": "2) Verify Code → Backend JWT",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.code === 200);",
+              "const json = pm.response.json();",
+              "if (json && json.token) {",
+              "  pm.environment.set(\"user_jwt\", json.token);",
+              "} else {",
+              "  pm.environment.unset(\"user_jwt\");",
+              "}",
+              "if (json && json.user && json.user._id) {",
+              "  pm.environment.set(\"user_id\", json.user._id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-api-key", "value": "{{global_api_key}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"{{google_code}}\",\n  \"redirectUri\": \"{{redirect_uri}}\"\n}"
+        },
+        "url": "{{base_url}}/api/v1/auth/oauth/google/verify",
+        "description": "Calls your backend to exchange the Google authorization code for tokens (via https://oauth2.googleapis.com/token), verifies id_token, upserts the user, and returns a JWT.\n\nRequires headers:\n- x-api-key: your global API key"
+      }
+    },
+    {
+      "name": "3) /auth/me (verify)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-api-key", "value": "{{global_api_key}}" },
+          { "key": "Authorization", "value": "Bearer {{user_jwt}}" }
+        ],
+        "url": "{{base_url}}/api/v1/auth/me",
+        "description": "Verifies the JWT returned by the previous step."
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "global_api_key", "value": "rjfqrur9L0v2XNzx574DI1Djejii70JP5S" },
+
+    {
+      "key": "google_client_id",
+      "value": "838315328027-va3sl72u73jdao8hcg10f8ii1i805u8j.apps.googleusercontent.com"
+    },
+    { "key": "redirect_uri", "value": "https://oauth.pstmn.io/v1/callback" },
+
+    { "key": "google_code", "value": "" },
+    { "key": "user_jwt", "value": "" },
+    { "key": "user_id", "value": "" }
+  ]
+}

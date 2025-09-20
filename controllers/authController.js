@@ -1,9 +1,10 @@
 // controllers/authController.js
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+const jwt = require("jsonwebtoken"); // kept for email/password flow
 const { OAuth2Client } = require("google-auth-library");
 const mongoose = require("mongoose");
 const crypto = require("crypto");
+const axios = require("axios");
 
 const User = require("../models/User");
 const Department = require("../models/Department");
@@ -35,7 +36,7 @@ const getPrefix = (raw) => String(raw).slice(0, 8);
 // Persist apiKey (plaintext) + hash + prefix
 async function setUserApiKey(user) {
   const raw = generateRawApiKey();
-  user.apiKey = raw;                    // plaintext (model has select:false)
+  user.apiKey = raw; // plaintext (model should have select:false)
   user.apiKeyHash = hashApiKey(raw);
   user.apiKeyPrefix = getPrefix(raw);
   user.apiKeyCreatedAt = new Date();
@@ -57,12 +58,11 @@ async function clearUserApiKey(user) {
 const generateToken = (user) =>
   jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "12h" });
 
-// Remove sensitive stuff from response
 const sanitizeUser = (userDoc) => {
   const u = userDoc?.toObject ? userDoc.toObject() : userDoc;
   if (!u) return u;
   delete u.password;
-  delete u.apiKey;       // avoid leaking unless explicitly returning as separate field
+  delete u.apiKey; // never leak plaintext apiKey inside user blob
   delete u.apiKeyHash;
   return u;
 };
@@ -103,7 +103,7 @@ const mapGoogleProfile = (p = {}) => ({
 const upsertUserFromGoogle = async ({ profile, departmentId }) => {
   const { googleId, email, name, picture, givenName, familyName, locale, emailVerified } = mapGoogleProfile(profile);
 
-  let user = await User.findOne({ email });
+  let user = await User.findOne({ email }).select("+apiKey");
   if (!user) {
     user = await User.create({
       name,
@@ -121,7 +121,6 @@ const upsertUserFromGoogle = async ({ profile, departmentId }) => {
     });
     logger.info("User created via Google", { email });
   } else {
-    // link + update profile details
     if (!user.googleId) user.googleId = googleId;
     user.provider = "google";
     if (picture) user.picture = picture;
@@ -134,12 +133,23 @@ const upsertUserFromGoogle = async ({ profile, departmentId }) => {
   user.lastLoginAt = new Date();
   await user.save();
 
+  // Re-fetch with +apiKey
+  user = await User.findById(user._id).select("+apiKey");
   return user;
 };
 
+// OPTIONAL helper to verify ID token anywhere
+async function fetchUserFromIdToken(idToken) {
+  const ticket = await oauth2Client.verifyIdToken({
+    idToken,
+    audience: googleClientId
+  });
+  return ticket.getPayload();
+}
+
 /* ============================== AUTH ============================== */
 
-// Register (role forced to "user")
+/** Register (role=user) — email/password (unchanged) */
 exports.register = async (req, res, next) => {
   try {
     const { name, email, password, departmentId, address } = req.body || {};
@@ -186,7 +196,7 @@ exports.register = async (req, res, next) => {
   }
 };
 
-// Login (email/password) — returns apiKey for admins; creates one if missing
+/** Login — email/password (unchanged behavior) */
 exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
@@ -196,7 +206,7 @@ exports.login = async (req, res, next) => {
         { field: "password", msg: "Password is required" }
       ]);
 
-    // include +apiKey so we can return it
+    // include +apiKey so we can return it for admins (existing behavior)
     const user = await User.findOne({ email: email.toLowerCase(), isActive: true }).select("+apiKey");
     if (!user) return bad(res, 400, "Invalid credentials");
 
@@ -205,14 +215,14 @@ exports.login = async (req, res, next) => {
 
     user.lastLoginAt = new Date();
 
-    // expose apiKey only for admins; mint if missing
+    // expose apiKey only for admins; mint if missing (existing behavior)
     let apiKeyToReturn = undefined;
     const isAdmin = ["super_admin", "department_admin"].includes(user.role);
     if (isAdmin) {
       if (!user.apiKey) {
-        apiKeyToReturn = await setUserApiKey(user); // creates + stores plaintext/hash/prefix
+        apiKeyToReturn = await setUserApiKey(user);
       } else {
-        apiKeyToReturn = user.apiKey; // already stored
+        apiKeyToReturn = user.apiKey;
         await user.save();
       }
     } else {
@@ -231,53 +241,86 @@ exports.login = async (req, res, next) => {
   }
 };
 
-/* ===== Google ID Token login (simple/SPA flow) =====
-   Body: { idToken, departmentId?, address? } */
-exports.googleAuth = async (req, res, next) => {
+/** Google login via ID token — RETURNS apiKey (no JWT) */
+exports.googleAuth = async (req, res) => {
   try {
     const { idToken, departmentId, address } = req.body || {};
-    if (!isNonEmpty(idToken))
+    if (!idToken || typeof idToken !== "string") {
       return bad(res, 422, "Validation failed", [{ field: "idToken", msg: "idToken is required" }]);
+    }
 
     if (departmentId) {
       const depErr = await ensureDepartment(departmentId);
       if (depErr) return bad(res, 422, depErr);
     }
 
-    const ticket = await oauth2Client.verifyIdToken({
-      idToken,
-      audience: googleClientId
-    });
-
+    // Verify Google ID token (OIDC)
+    const ticket = await oauth2Client.verifyIdToken({ idToken, audience: googleClientId });
     const payload = ticket.getPayload() || {};
     if (!isEmail(payload.email)) return bad(res, 401, "Google authentication failed");
 
     let user = await upsertUserFromGoogle({ profile: payload, departmentId });
 
-    if (isNonEmpty(address)) {
+    if (address && typeof address === "string") {
       user.address = address.trim();
       await user.save();
+      user = await User.findById(user._id).select("+apiKey");
     }
 
-    return res.status(200).json({
-      success: true,
-      token: generateToken(user),
-      user: sanitizeUser(user)
-    });
+    // Ensure per-user API key exists
+    let apiKeyToReturn = user.apiKey;
+    if (!apiKeyToReturn) apiKeyToReturn = await setUserApiKey(user);
+
+    return res.status(200).json({ success: true, apiKey: apiKeyToReturn, user: sanitizeUser(user) });
   } catch (error) {
     logger.error("Google auth error", { error: error.message });
     return bad(res, 401, "Google authentication failed");
   }
 };
 
-/* ===== Full Google OAuth (redirect) =====
-   GET /api/v1/auth/google/url  -> returns consent URL
-   Scopes: openid, email, profile
-*/
+/** Google OAuth Code → id_token — RETURNS apiKey (no JWT)
+ *  Body: { code, redirectUri? }
+ */
+exports.googleVerifyCode = async (req, res) => {
+  try {
+    const { code, redirectUri } = req.body || {};
+    if (!code || typeof code !== "string") {
+      return bad(res, 422, "Validation failed", [{ field: "code", msg: "authorization code is required" }]);
+    }
+
+    const params = {
+      client_id: googleClientId,
+      client_secret: googleClientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri || googleRedirectUri
+    };
+
+    const tokenResp = await axios.post("https://oauth2.googleapis.com/token", null, { params });
+    const idToken = tokenResp.data?.id_token;
+    if (!idToken) return bad(res, 401, "Google authentication failed", [{ msg: "No id_token in token response" }]);
+
+    const ticket = await oauth2Client.verifyIdToken({ idToken, audience: googleClientId });
+    const payload = ticket.getPayload() || {};
+    if (!isEmail(payload.email)) return bad(res, 401, "Google authentication failed");
+
+    let user = await upsertUserFromGoogle({ profile: payload, departmentId: null });
+
+    let apiKeyToReturn = user.apiKey;
+    if (!apiKeyToReturn) apiKeyToReturn = await setUserApiKey(user);
+
+    return res.status(200).json({ success: true, apiKey: apiKeyToReturn, user: sanitizeUser(user) });
+  } catch (err) {
+    logger.error("googleVerifyCode error", { error: err?.response?.data || err.message });
+    return bad(res, 401, "Google authentication failed");
+  }
+};
+
+/** Create a consent URL (kept if you still use redirect flow somewhere) */
 exports.getGoogleAuthUrl = async (req, res) => {
   try {
-    const state = req.query.state || ""; // optional CSRF/return-to
-    const departmentId = req.query.departmentId || ""; // optional to bind dept
+    const state = req.query.state || "";
+    const departmentId = req.query.departmentId || "";
     const scopes = [
       "openid",
       "https://www.googleapis.com/auth/userinfo.email",
@@ -298,10 +341,7 @@ exports.getGoogleAuthUrl = async (req, res) => {
   }
 };
 
-/* ===== OAuth Callback =====
-   GET /api/v1/auth/google/callback?code=...&state=...
-   Exchanges code -> tokens -> fetches userinfo -> upsert -> returns your JWT
-*/
+/** OAuth redirect callback (kept; returns JWT historically) */
 exports.googleOAuthCallback = async (req, res) => {
   try {
     const { code, state } = req.query || {};
@@ -317,22 +357,23 @@ exports.googleOAuthCallback = async (req, res) => {
       if (depErr) return bad(res, 422, depErr);
     }
 
-    // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
-    // Fetch Google user profile
     const { data: profile } = await oauth2Client.request({
       url: "https://www.googleapis.com/oauth2/v3/userinfo"
     });
 
     if (!isEmail(profile.email)) return bad(res, 401, "Google authentication failed");
 
-    const user = await upsertUserFromGoogle({ profile, departmentId });
+    // For consistency, we can also return apiKey here (optional)
+    let user = await upsertUserFromGoogle({ profile, departmentId });
+    let apiKeyToReturn = user.apiKey;
+    if (!apiKeyToReturn) apiKeyToReturn = await setUserApiKey(user);
 
     return res.status(200).json({
       success: true,
-      token: generateToken(user),
+      apiKey: apiKeyToReturn,
       user: sanitizeUser(user)
     });
   } catch (err) {
@@ -341,19 +382,18 @@ exports.googleOAuthCallback = async (req, res) => {
   }
 };
 
-// Current user
+/** Current principal (works with apiKeyGate attaching req.user) */
 exports.me = async (req, res) => {
   return res.status(200).json({ success: true, user: sanitizeUser(req.user) });
 };
 
-// Logout (client clears token)
+/** Logout (client clears credential) */
 exports.logout = async (_req, res) => {
   return res.status(200).json({ success: true, message: "Logged out" });
 };
 
 /* ============================== ADMIN ============================= */
 
-// Admin Create User — auto-generate & store API key; return plaintext once
 exports.adminCreateUser = async (req, res, next) => {
   try {
     const { name, email, password, role = "user", departmentId, address, picture } = req.body || {};
@@ -399,7 +439,7 @@ exports.adminCreateUser = async (req, res, next) => {
 
     const hashed = password ? await bcrypt.hash(password, 12) : undefined;
 
-    const user = await User.create({
+    let user = await User.create({
       name: name.trim(),
       email: email.toLowerCase(),
       password: hashed,
@@ -411,7 +451,8 @@ exports.adminCreateUser = async (req, res, next) => {
       isActive: true
     });
 
-    // Generate & store API key (plaintext + hash + prefix)
+    // Generate & store API key always for admins and optionally for users
+    user = await User.findById(user._id).select("+apiKey");
     const plaintextApiKey = await setUserApiKey(user);
 
     return res.status(201).json({
@@ -425,7 +466,6 @@ exports.adminCreateUser = async (req, res, next) => {
   }
 };
 
-// List Users (pagination + filtering; accepts ?departmentId=<id>)
 exports.listUsers = async (req, res, next) => {
   try {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
@@ -447,7 +487,7 @@ exports.listUsers = async (req, res, next) => {
         .sort(sort)
         .skip(skip)
         .limit(limit)
-        .select("-password") // apiKey & apiKeyHash are select:false, so safe
+        .select("-password")
         .populate("department", "id code name shortcode")
         .lean(),
       User.countDocuments(filter)
@@ -464,7 +504,6 @@ exports.listUsers = async (req, res, next) => {
   }
 };
 
-// Get User by ID (scoped)
 exports.getUser = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -488,13 +527,12 @@ exports.getUser = async (req, res, next) => {
   }
 };
 
-// Patch User (partial update)
 exports.updateUser = async (req, res, next) => {
   try {
     const { id } = req.params || {};
     if (!isObjectId(id)) return bad(res, 422, "Validation failed", [{ field: "id", msg: "Invalid user id" }]);
 
-    const target = await User.findById(id).select("+apiKey"); // allow API key maintenance if needed
+    const target = await User.findById(id).select("+apiKey");
     if (!target) return bad(res, 404, "User not found");
 
     // Scope checks
@@ -515,7 +553,8 @@ exports.updateUser = async (req, res, next) => {
     if (typeof password === "string" && password.length) {
       if (req.user.role !== "super_admin" && String(target._id) !== String(req.user._id))
         return bad(res, 403, "Only self or super admin can change password");
-      if (password.length < 6) return bad(res, 422, "Validation failed", [{ field: "password", msg: "Min length 6" }]);
+      if (password.length < 6)
+        return bad(res, 422, "Validation failed", [{ field: "password", msg: "Min length 6" }]);
       target.password = await bcrypt.hash(password, 12);
     }
 
@@ -553,7 +592,6 @@ exports.updateUser = async (req, res, next) => {
   }
 };
 
-// Soft delete (isActive = false)
 exports.deleteUser = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -580,7 +618,6 @@ exports.deleteUser = async (req, res, next) => {
 
 /* ============================== API KEY MGMT ============================= */
 
-// Rotate API key (creates new plaintext + hash + prefix; returns plaintext)
 exports.rotateApiKey = async (req, res) => {
   const targetId = req.params.userId || req.user._id;
   if (!isObjectId(targetId)) return bad(res, 422, "Invalid user id");
@@ -600,7 +637,6 @@ exports.rotateApiKey = async (req, res) => {
   return res.status(200).json({ success: true, apiKey: plaintext });
 };
 
-// Revoke API key (clears plaintext + hash + prefix)
 exports.revokeApiKey = async (req, res) => {
   const targetId = req.params.userId || req.user._id;
   if (!isObjectId(targetId)) return bad(res, 422, "Invalid user id");
@@ -619,3 +655,6 @@ exports.revokeApiKey = async (req, res) => {
   await clearUserApiKey(target);
   return res.status(200).json({ success: true, message: "API key revoked" });
 };
+
+/* ===== Optional exports for testing/helpers ===== */
+exports._fetchUserFromIdToken = fetchUserFromIdToken;

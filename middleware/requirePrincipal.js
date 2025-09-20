@@ -4,8 +4,11 @@ const User = require("../models/User");
 
 module.exports = async function requirePrincipal(req, res, next) {
   try {
-    // If apiKeyGate already attached a user, use it
-    if (req.user && req.user._id) return next();
+    // If apiKeyGate already attached a user (per-user API key), normalize to principal too
+    if (req.user && req.user._id) {
+      req.principal = req.user;
+      return next();
+    }
 
     // Else try Authorization: Bearer <jwt>
     const hdr = req.headers.authorization || req.headers.Authorization;
@@ -19,13 +22,19 @@ module.exports = async function requirePrincipal(req, res, next) {
     }
 
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(payload.id).select("_id name email role department provider isActive");
+
+    const user = await User.findById(payload.id).select(
+      "_id name email role department provider googleId emailVerified isActive"
+    );
+
     if (!user || !user.isActive) {
       return res.status(401).json({ success: false, message: "Invalid or inactive user." });
     }
 
-    req.user = user; // attach
-    next();
+    // normalize
+    req.user = user;        // keep compatibility with existing code
+    req.principal = user;   // explicit alias
+    return next();
   } catch (err) {
     return res.status(401).json({ success: false, message: "Invalid or expired token." });
   }
