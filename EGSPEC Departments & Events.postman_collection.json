@@ -1,0 +1,196 @@
+{
+  "info": {
+    "name": "EGSPEC Departments & Events",
+    "_postman_id": "c3fb2a11-1a6e-4ab3-9a15-2a0e7cdf7abc",
+    "description": "Department and Event endpoints protected by x-api-key. Admin writes require super_admin or department_admin as per routes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/health"
+      }
+    },
+    {
+      "name": "Departments",
+      "item": [
+        {
+          "name": "Dept - Create (super_admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.code === 201);",
+                  "const json = pm.response.json();",
+                  "pm.environment.set(\"dept_id\", json.data?._id || \"\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"EGSPEC/EEE\",\n  \"name\": \"Electrical and Electronics Engineering\",\n  \"shortcode\": \"EEE\",\n  \"isActive\": true\n}"
+            },
+            "url": "{{base_url}}/api/v1/departments"
+          }
+        },
+        {
+          "name": "Dept - List (public w/ API key)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/departments?limit=50&sort=name"
+          }
+        },
+        {
+          "name": "Dept - Get by ID (public w/ API key)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/departments/{{dept_id}}"
+          }
+        },
+        {
+          "name": "Dept - Update (super_admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EEE - Electrical & Electronics\",\n  \"shortcode\": \"EEE\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/departments/{{dept_id}}"
+          }
+        },
+        {
+          "name": "Dept - Delete (soft) (super_admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/departments/{{dept_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "Event - Create (Admin: super_admin or department_admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.code === 201);",
+                  "const json = pm.response.json();",
+                  "pm.environment.set(\"event_id\", json.data?._id || \"\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EEE Symposium 2025\",\n  \"description\": \"A flagship EEE symposium with talks and workshops.\",\n  \"thumbnailUrl\": \"https://example.com/img/eee-symp.png\",\n  \"mode\": \"offline\",\n  \"offline\": { \"venueName\": \"Main Auditorium\", \"address\": \"EGSPEC Campus\", \"mapLink\": \"https://maps.example.com/venue\" },\n  \"startAt\": \"2025-10-05T04:30:00.000Z\",\n  \"endAt\": \"2025-10-05T10:30:00.000Z\",\n  \"departmentId\": \"{{dept_id}}\",\n  \"payment\": { \"method\": \"none\" },\n  \"contacts\": [ { \"name\": \"EEE Staff\", \"phone\": \"+91-9000000000\", \"email\": \"eee@egspec.org\" } ],\n  \"departmentSite\": \"https://eee.egspec.org\",\n  \"contactEmail\": \"eee@egspec.org\",\n  \"extra\": { \"tags\": [\"symposium\", \"eee\"] },\n  \"status\": \"draft\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/events"
+          }
+        },
+        {
+          "name": "Event - Update (Admin: super_admin or department_admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"published\",\n  \"description\": \"Updated agenda and speakers added.\",\n  \"contacts\": [ { \"name\": \"EEE Convenor\", \"phone\": \"+91-9000000001\", \"email\": \"convenor.eee@egspec.org\" } ]\n}"
+            },
+            "url": "{{base_url}}/api/v1/events/{{event_id}}"
+          }
+        },
+        {
+          "name": "Event - Admin List (All statuses in scope)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/events/admin?limit=20&sort=-startAt"
+          }
+        },
+        {
+          "name": "Event - Admin Get by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/events/admin/{{event_id}}"
+          }
+        },
+        {
+          "name": "Event - Public List (published only)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/events?limit=20&sort=-startAt&upcoming=true"
+          }
+        },
+        {
+          "name": "Event - Public Get by ID (published only)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/events/{{event_id}}"
+          }
+        },
+        {
+          "name": "Event - Delete (soft) (Admin: super_admin or department_admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+            "url": "{{base_url}}/api/v1/events/{{event_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Who Am I (debug)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{admin_api_key}}" }],
+        "url": "{{base_url}}/api/v1/auth/me"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+
+    { "key": "global_api_key", "value": "rjfqrur9L0v2XNzx574DI1Djejii70JP5S" },
+    { "key": "dept_admin_api_key", "value": "" },
+    { "key": "admin_api_key", "value": "{{global_api_key}}" },
+
+    { "key": "dept_id", "value": "" },
+    { "key": "event_id", "value": "" }
+  ]
+}

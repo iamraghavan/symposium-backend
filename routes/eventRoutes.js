@@ -21,4 +21,10 @@ router.post("/", authorize("super_admin", "department_admin"), ctrl.createEvent)
 router.patch("/:id", authorize("super_admin", "department_admin"), ctrl.updateEvent);
 router.delete("/:id", authorize("super_admin", "department_admin"), ctrl.deleteEvent);
 
+router.get(
+  "/admin/created-by/:userId",
+  authorize("super_admin", "department_admin"),
+  ctrl.adminListEventsByCreator
+);
+
 module.exports = router;

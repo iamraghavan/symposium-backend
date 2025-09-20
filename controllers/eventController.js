@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Event = require("../models/Event");
 const Department = require("../models/Department");
 const logger = require("../utils/logger");
+const User = require("../models/User");
 
 /* -------------------------- helpers & guards -------------------------- */
 
@@ -388,6 +389,85 @@ exports.deleteEvent = async (req, res, next) => {
     return res.status(200).json({ success: true, message: "Event deleted" });
   } catch (err) {
     logger.error("deleteEvent error", { error: err.message });
+    next(err);
+  }
+};
+
+/* ----------------------- ADMIN: list by creator ----------------------- */
+/**
+ * GET /api/v1/events/admin/created-by/:userId
+ * GET /api/v1/events/admin/created-by/me   (alias)
+ *
+ * Rules:
+ * - super_admin: can view events created by any user (optionally filter to department via ?departmentId)
+ * - department_admin: can view only events they created (or, if you want, within their department — here we enforce **self only**)
+ *
+ * Query: page, limit, sort, status?, q?, upcoming?=true, departmentId? (super_admin only)
+ */
+exports.adminListEventsByCreator = async (req, res, next) => {
+  try {
+    let { userId } = req.params || {};
+    if (userId === "me") userId = String(req.user._id);
+
+    if (!isObjectId(userId)) {
+      return bad(res, 422, "Invalid creator user id");
+    }
+
+    // Fetch creator to verify role, helpful for messages and (optionally) restricting to department_admin
+    const creator = await User.findById(userId).lean();
+    if (!creator) return bad(res, 404, "Creator not found");
+
+    // Scope: dept_admin can only view their own created events
+    if (req.user.role === "department_admin" && String(req.user._id) !== String(userId)) {
+      return bad(res, 403, "Forbidden: department admin can only view their own created events");
+    }
+
+    // Pagination & filters
+    const page  = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
+    const skip  = (page - 1) * limit;
+    const sort  = (req.query.sort || "-startAt").split(",").join(" ");
+
+    const filter = { isActive: true, createdBy: userId };
+
+    // super_admin may optionally filter department
+    if (req.user.role === "super_admin" && req.query.departmentId) {
+      if (!isObjectId(req.query.departmentId)) return bad(res, 422, "Invalid departmentId");
+      filter.department = req.query.departmentId;
+    }
+
+    // Optional filters
+    if (req.query.status) {
+      const allowed = ["draft", "published", "cancelled"];
+      if (!allowed.includes(req.query.status)) return bad(res, 422, "Invalid status");
+      filter.status = req.query.status;
+    }
+    if (req.query.q) filter.name = { $regex: req.query.q, $options: "i" };
+    if (req.query.upcoming === "true") filter.endAt = { $gte: new Date() };
+
+    const [items, total] = await Promise.all([
+      Event.find(filter)
+        .sort(sort).skip(skip).limit(limit)
+        .populate("department", "id code name shortcode")
+        .populate("createdBy", "name email role")
+        .lean(),
+      Event.countDocuments(filter)
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      meta: { total, page, limit, hasMore: skip + items.length < total },
+      creator: {
+        _id: creator._id,
+        name: creator.name,
+        email: creator.email,
+        role: creator.role,
+        department: creator.department || null
+      },
+      data: items
+    });
+  } catch (err) {
+    logger.error("adminListEventsByCreator error", { error: err.message });
     next(err);
   }
 };

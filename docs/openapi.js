@@ -2,21 +2,22 @@
 const openapi = {
   openapi: "3.0.3",
   info: {
-    title: "EGSPEC Auth API",
+    title: "EGSPEC API",
     description:
-      "Authentication & Admin endpoints using **x-api-key** (global or per-user). " +
-      "Admin creation returns a per-user API key (shown once). Login returns stored admin apiKey if available.",
-    version: "1.0.0"
+      "Authentication, Departments & Events endpoints secured via **x-api-key** (global or per-user). " +
+      "Admin creation returns a per-user API key (shown once). Login can return stored admin apiKey if available.",
+    version: "1.1.0"
   },
   servers: [
-    { url: "http://localhost:8000", description: "Local" },
-    // add more servers as needed
+    { url: "http://localhost:8000", description: "Local" }
   ],
   tags: [
     { name: "Health" },
     { name: "Auth" },
     { name: "Admin Users" },
-    { name: "API Keys" }
+    { name: "API Keys" },
+    { name: "Departments" },
+    { name: "Events" }
   ],
   components: {
     securitySchemes: {
@@ -31,7 +32,7 @@ const openapi = {
       }
     },
     schemas: {
-      // ===== Core =====
+      /* ===== Core User ===== */
       User: {
         type: "object",
         properties: {
@@ -60,7 +61,8 @@ const openapi = {
           code: { type: "string", nullable: true }
         }
       },
-      // ===== Auth payloads =====
+
+      /* ===== Auth payloads ===== */
       LoginRequest: {
         type: "object",
         required: ["email", "password"],
@@ -102,7 +104,8 @@ const openapi = {
           user: { $ref: "#/components/schemas/User" }
         }
       },
-      // ===== Admin user management =====
+
+      /* ===== Admin user management ===== */
       CreateUserRequest: {
         type: "object",
         required: ["name", "email"],
@@ -110,11 +113,7 @@ const openapi = {
           name: { type: "string", example: "EEE Department Admin" },
           email: { type: "string", example: "eeeadmin@egspec.org" },
           password: { type: "string", example: "EEE@123" },
-          role: {
-            type: "string",
-            enum: ["super_admin", "department_admin", "user"],
-            example: "department_admin"
-          },
+          role: { type: "string", enum: ["super_admin", "department_admin", "user"], example: "department_admin" },
           departmentId: { type: "string", nullable: true, example: "68cd4d6b778a4db47873d869" },
           address: { type: "string", nullable: true },
           picture: { type: "string", nullable: true }
@@ -177,12 +176,195 @@ const openapi = {
           success: { type: "boolean", example: true },
           message: { type: "string", example: "Logged out" }
         }
+      },
+
+      /* ===== Departments ===== */
+      Department: {
+        type: "object",
+        properties: {
+          _id: { type: "string", example: "68cd4d6b778a4db47873d869" },
+          code: { type: "string", example: "EGSPEC/EEE" },
+          name: { type: "string", example: "Electrical and Electronics Engineering" },
+          shortcode: { type: "string", example: "EEE" },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" }
+        }
+      },
+      CreateDepartmentRequest: {
+        type: "object",
+        required: ["code", "name", "shortcode"],
+        properties: {
+          code: { type: "string", example: "EGSPEC/EEE" },
+          name: { type: "string", example: "Electrical and Electronics Engineering" },
+          shortcode: { type: "string", example: "EEE" },
+          isActive: { type: "boolean", example: true }
+        }
+      },
+      UpdateDepartmentRequest: {
+        type: "object",
+        properties: {
+          code: { type: "string", example: "EGSPEC/EEE" },
+          name: { type: "string", example: "EEE - Electrical & Electronics" },
+          shortcode: { type: "string", example: "EEE" },
+          isActive: { type: "boolean", example: true }
+        }
+      },
+      ListDepartmentsResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean" },
+          meta: {
+            type: "object",
+            properties: {
+              total: { type: "integer" },
+              page: { type: "integer" },
+              limit: { type: "integer" },
+              hasMore: { type: "boolean" }
+            }
+          },
+          data: { type: "array", items: { $ref: "#/components/schemas/Department" } }
+        }
+      },
+
+      /* ===== Events ===== */
+      Event: {
+        type: "object",
+        properties: {
+          _id: { type: "string", example: "68cf10d3b9b9d2a86f7a1a23" },
+          name: { type: "string", example: "EEE Symposium 2025" },
+          slug: { type: "string", example: "eee-symposium-2025" },
+          description: { type: "string" },
+          thumbnailUrl: { type: "string", nullable: true },
+          mode: { type: "string", enum: ["online", "offline"], example: "offline" },
+          online: {
+            type: "object",
+            nullable: true,
+            properties: {
+              provider: { type: "string", example: "other" },
+              url: { type: "string", example: "https://meet.example.com/abc" }
+            }
+          },
+          offline: {
+            type: "object",
+            nullable: true,
+            properties: {
+              venueName: { type: "string", example: "Main Auditorium" },
+              address: { type: "string", example: "EGSPEC Campus" },
+              mapLink: { type: "string", example: "https://maps.example.com/venue" }
+            }
+          },
+          startAt: { type: "string", format: "date-time" },
+          endAt: { type: "string", format: "date-time" },
+          department: { type: "string", example: "68cd4d6b778a4db47873d869" },
+          createdBy: { type: "string", example: "68ce30aa8ac6618c45bfb533" },
+          payment: {
+            type: "object",
+            properties: {
+              method: { type: "string", example: "none" },
+              gatewayProvider: { type: "string", nullable: true },
+              gatewayLink: { type: "string", nullable: true },
+              price: { type: "number", nullable: true, example: 0 },
+              currency: { type: "string", example: "INR" },
+              qrImageUrl: { type: "string", nullable: true },
+              qrInstructions: { type: "string", nullable: true },
+              allowScreenshot: { type: "boolean", example: true }
+            }
+          },
+          contacts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                phone: { type: "string" },
+                email: { type: "string" }
+              }
+            }
+          },
+          departmentSite: { type: "string", nullable: true },
+          contactEmail: { type: "string", nullable: true },
+          extra: { type: "object", additionalProperties: true },
+          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" }
+        }
+      },
+      CreateEventRequest: {
+        type: "object",
+        required: ["name", "mode", "startAt", "endAt", "departmentId"],
+        properties: {
+          name: { type: "string", example: "EEE Symposium 2025" },
+          description: { type: "string" },
+          thumbnailUrl: { type: "string" },
+          mode: { type: "string", enum: ["online", "offline"], example: "offline" },
+          online: {
+            type: "object",
+            properties: {
+              provider: { type: "string", example: "other" },
+              url: { type: "string", example: "https://meet.example.com/abc" }
+            }
+          },
+          offline: {
+            type: "object",
+            properties: {
+              venueName: { type: "string", example: "Main Auditorium" },
+              address: { type: "string", example: "EGSPEC Campus" },
+              mapLink: { type: "string", example: "https://maps.example.com/venue" }
+            }
+          },
+          startAt: { type: "string", format: "date-time", example: "2025-10-05T04:30:00.000Z" },
+          endAt: { type: "string", format: "date-time", example: "2025-10-05T10:30:00.000Z" },
+          departmentId: { type: "string", example: "68cd4d6b778a4db47873d869" },
+          payment: { $ref: "#/components/schemas/Event/properties/payment" },
+          contacts: { $ref: "#/components/schemas/Event/properties/contacts" },
+          departmentSite: { type: "string" },
+          contactEmail: { type: "string" },
+          extra: { type: "object", additionalProperties: true },
+          status: { type: "string", enum: ["draft", "published", "cancelled"], example: "draft" }
+        }
+      },
+      UpdateEventRequest: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          description: { type: "string" },
+          thumbnailUrl: { type: "string" },
+          mode: { type: "string", enum: ["online", "offline"] },
+          online: { $ref: "#/components/schemas/Event/properties/online" },
+          offline: { $ref: "#/components/schemas/Event/properties/offline" },
+          startAt: { type: "string", format: "date-time" },
+          endAt: { type: "string", format: "date-time" },
+          payment: { $ref: "#/components/schemas/Event/properties/payment" },
+          contacts: { $ref: "#/components/schemas/Event/properties/contacts" },
+          departmentSite: { type: "string" },
+          contactEmail: { type: "string" },
+          extra: { type: "object", additionalProperties: true },
+          status: { type: "string", enum: ["draft", "published", "cancelled"] }
+        }
+      },
+      ListEventsResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean" },
+          meta: {
+            type: "object",
+            properties: {
+              total: { type: "integer" },
+              page: { type: "integer" },
+              limit: { type: "integer" },
+              hasMore: { type: "boolean" }
+            }
+          },
+          data: { type: "array", items: { $ref: "#/components/schemas/Event" } }
+        }
       }
     }
   },
   security: [{ ApiKeyAuth: [] }],
   paths: {
-    // ===== Health =====
+    /* ===== Health ===== */
     "/health": {
       get: {
         tags: ["Health"],
@@ -208,20 +390,14 @@ const openapi = {
       }
     },
 
-    // ===== Auth =====
+    /* ===== Auth ===== */
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
         summary: "Login (email/password) — requires x-api-key gate",
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } }
-        },
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } } },
         responses: {
-          200: {
-            description: "Login success",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/LoginResponse" } } }
-          },
+          200: { description: "Login success", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginResponse" } } } },
           400: { description: "Invalid credentials", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
           401: { description: "Unauthorized (missing/invalid x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
           422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
@@ -232,10 +408,7 @@ const openapi = {
       post: {
         tags: ["Auth"],
         summary: "Self register (role=user)",
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterRequest" } } }
-        },
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterRequest" } } } },
         responses: {
           201: { description: "Registered", content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterResponse" } } } },
           401: { description: "Unauthorized (x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
@@ -274,15 +447,12 @@ const openapi = {
       }
     },
 
-    // ===== Admin Users =====
+    /* ===== Admin Users ===== */
     "/api/v1/auth/users": {
       post: {
         tags: ["Admin Users"],
-        summary: "Create user (super_admin & department_admin). Admin create returns apiKey.",
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserRequest" } } }
-        },
+        summary: "Create user (super_admin & department_admin). Returns per-user apiKey.",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserRequest" } } } },
         responses: {
           201: { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserResponse" } } } },
           401: { description: "Unauthorized (x-api-key)" },
@@ -327,10 +497,7 @@ const openapi = {
         tags: ["Admin Users"],
         summary: "Update user (scoped)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateUserRequest" } } }
-        },
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateUserRequest" } } } },
         responses: {
           200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
           401: { description: "Unauthorized" },
@@ -352,7 +519,7 @@ const openapi = {
       }
     },
 
-    // ===== API Keys =====
+    /* ===== API Keys ===== */
     "/api/v1/auth/apikey/rotate/{userId}": {
       post: {
         tags: ["API Keys"],
@@ -378,6 +545,168 @@ const openapi = {
           403: { description: "Forbidden" },
           404: { description: "User not found" },
           422: { description: "Invalid user id" }
+        }
+      }
+    },
+
+    /* ===== Departments ===== */
+    "/api/v1/departments": {
+      get: {
+        tags: ["Departments"],
+        summary: "List departments (public read with API key). Only active unless super_admin & includeInactive=true",
+        parameters: [
+          { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", schema: { type: "integer", default: 50 } },
+          { name: "sort", in: "query", schema: { type: "string", example: "name" } },
+          { name: "q", in: "query", schema: { type: "string" } },
+          { name: "includeInactive", in: "query", schema: { type: "boolean" } }
+        ],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListDepartmentsResponse" } } } }
+        }
+      },
+      post: {
+        tags: ["Departments"],
+        summary: "Create department (super_admin)",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateDepartmentRequest" } } } },
+        responses: {
+          201: { description: "Created", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          409: { description: "Duplicate code/shortcode" },
+          422: { description: "Validation failed" }
+        }
+      }
+    },
+    "/api/v1/departments/{id}": {
+      get: {
+        tags: ["Departments"],
+        summary: "Get department by id (public read with API key). Only active unless super_admin & includeInactive=true",
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" } },
+          { name: "includeInactive", in: "query", schema: { type: "boolean" } }
+        ],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          404: { description: "Not found" },
+          422: { description: "Invalid department id" }
+        }
+      },
+      patch: {
+        tags: ["Departments"],
+        summary: "Update department (super_admin)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateDepartmentRequest" } } } },
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
+          409: { description: "Duplicate code/shortcode" },
+          404: { description: "Not found" },
+          422: { description: "Invalid department id" }
+        }
+      },
+      delete: {
+        tags: ["Departments"],
+        summary: "Soft delete department (isActive=false) (super_admin)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
+          404: { description: "Not found" },
+          422: { description: "Invalid department id" }
+        }
+      }
+    },
+
+    /* ===== Events ===== */
+    "/api/v1/events": {
+      get: {
+        tags: ["Events"],
+        summary: "Public: list published events only",
+        parameters: [
+          { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
+          { name: "sort", in: "query", schema: { type: "string", example: "-startAt" } },
+          { name: "departmentId", in: "query", schema: { type: "string" } },
+          { name: "q", in: "query", schema: { type: "string" } },
+          { name: "upcoming", in: "query", schema: { type: "boolean" } }
+        ],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListEventsResponse" } } } }
+        }
+      },
+      post: {
+        tags: ["Events"],
+        summary: "Create event (super_admin or department_admin; dept-admin limited to own department)",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateEventRequest" } } } },
+        responses: {
+          201: { description: "Created", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          403: { description: "Forbidden (wrong department scope)" },
+          422: { description: "Validation failed" }
+        }
+      }
+    },
+    "/api/v1/events/{id}": {
+      get: {
+        tags: ["Events"],
+        summary: "Public: get one event by id (published-only)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          403: { description: "Forbidden (not published)" },
+          404: { description: "Not found" },
+          422: { description: "Invalid event id" }
+        }
+      },
+      patch: {
+        tags: ["Events"],
+        summary: "Update event (super_admin or department_admin; dept-admin limited to own department)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateEventRequest" } } } },
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          403: { description: "Forbidden (wrong department scope)" },
+          404: { description: "Not found" },
+          422: { description: "Validation failed" }
+        }
+      },
+      delete: {
+        tags: ["Events"],
+        summary: "Soft delete event (isActive=false) (super_admin or department_admin; scoped)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
+          403: { description: "Forbidden (wrong department scope)" },
+          404: { description: "Not found" },
+          422: { description: "Invalid event id" }
+        }
+      }
+    },
+    "/api/v1/events/admin": {
+      get: {
+        tags: ["Events"],
+        summary: "Admin: list events (ALL statuses). dept_admin limited to own department; super_admin can filter departmentId.",
+        parameters: [
+          { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
+          { name: "sort", in: "query", schema: { type: "string", example: "-startAt" } },
+          { name: "departmentId", in: "query", schema: { type: "string" } },
+          { name: "status", in: "query", schema: { type: "string", enum: ["draft", "published", "cancelled"] } },
+          { name: "q", in: "query", schema: { type: "string" } },
+          { name: "upcoming", in: "query", schema: { type: "boolean" } }
+        ],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListEventsResponse" } } } },
+          422: { description: "Invalid departmentId/status" }
+        }
+      }
+    },
+    "/api/v1/events/admin/{id}": {
+      get: {
+        tags: ["Events"],
+        summary: "Admin: get one event (all statuses). dept_admin limited to own department",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
+          403: { description: "Forbidden (wrong department scope)" },
+          404: { description: "Not found" },
+          422: { description: "Invalid event id" }
         }
       }
     }
