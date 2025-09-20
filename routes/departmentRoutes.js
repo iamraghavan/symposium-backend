@@ -1,6 +1,5 @@
 // routes/v1/departmentRoutes.js
 const express = require("express");
-const auth = require("../middleware/auth");
 const authorize = require("../middleware/authorize");
 const ctrl = require("../controllers/departmentController");
 
@@ -20,8 +19,8 @@ router.get("/:id", ctrl.getDepartment);
  * PATCH /api/v1/departments/:id
  * DELETE /api/v1/departments/:id
  */
-router.post("/", auth, authorize("super_admin"), ctrl.createDepartment);
-router.patch("/:id", auth, authorize("super_admin"), ctrl.updateDepartment);
-router.delete("/:id", auth, authorize("super_admin"), ctrl.deleteDepartment);
+router.post("/",  authorize("super_admin"), ctrl.createDepartment);
+router.patch("/:id",  authorize("super_admin"), ctrl.updateDepartment);
+router.delete("/:id",  authorize("super_admin"), ctrl.deleteDepartment);
 
 module.exports = router;

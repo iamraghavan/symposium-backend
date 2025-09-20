@@ -2,181 +2,108 @@
 const openapi = {
   openapi: "3.0.3",
   info: {
-    title: "Symposium API",
-    version: "1.0.0",
-    description: [
-      "REST API for the Symposium app with Google OAuth, role-based access control (RBAC), API key gating, pagination, and versioned routes.",
-      "",
-      "## Content Type & Headers",
-      "- All endpoints **accept and return JSON** only.",
-      "- Always send:",
-      "  - `Content-Type: application/json` (for requests with a body)",
-      "  - `Accept: application/json`",
-      "  - `x-api-key: <your_api_key>` for all `/api/*` endpoints (required).",
-      "",
-      "## Authorization",
-      "- **API Key** (required for all `/api/*`):",
-      "  - Header: `x-api-key: rjfqrur9L0v2XNzx574DI1Djejii70JP5S` (example).",
-      "- **JWT Bearer Token** (required for protected routes):",
-      "  - Header: `Authorization: Bearer <JWT_FROM_/auth/login_OR_/auth/google>`",
-      "  - Token expires in 12h.",
-      "",
-      "## Roles",
-      "- `super_admin`: full system access.",
-      "- `department_admin`: access scoped to own department; can create **users** and **events** for their department.",
-      "- `user`: access to own resources; can read published events.",
-      "",
-      "## Versioning",
-      "- All endpoints are under `/api/v1/...`.",
-    ].join("\n"),
-    contact: { name: "EGSPEC", url: "https://www.egspec.org" }
+    title: "EGSPEC Auth API",
+    description:
+      "Authentication & Admin endpoints using **x-api-key** (global or per-user). " +
+      "Admin creation returns a per-user API key (shown once). Login returns stored admin apiKey if available.",
+    version: "1.0.0"
   },
-  servers: [{ url: "http://localhost:8000", description: "Local" }],
+  servers: [
+    { url: "http://localhost:8000", description: "Local" },
+    // add more servers as needed
+  ],
   tags: [
-    { name: "Auth", description: "Authentication & Session (requires x-api-key; some also require JWT)" },
-    { name: "Users", description: "User CRUD (admin-only). Requires x-api-key + Bearer JWT." },
-    { name: "Departments", description: "Department read (API key). CRUD restricted to super_admin (JWT)." },
-    { name: "Events", description: "Event CRUD & public listing. Read requires x-api-key; write requires JWT + role." },
-    { name: "Health", description: "Service health (no API key/JWT required by default)." }
+    { name: "Health" },
+    { name: "Auth" },
+    { name: "Admin Users" },
+    { name: "API Keys" }
   ],
   components: {
     securitySchemes: {
-      ApiKeyHeader: {
+      ApiKeyAuth: {
         type: "apiKey",
         in: "header",
         name: "x-api-key",
-        description: "Static API key required for all /api/* endpoints."
-      },
-      BearerAuth: {
-        type: "http",
-        scheme: "bearer",
-        bearerFormat: "JWT",
-        description: "JWT from /api/v1/auth/login or /api/v1/auth/google, sent as `Authorization: Bearer <token>`."
+        description:
+          "Required for **all** /api/* endpoints. Use either:\n" +
+          "- Global key (env: `API_KEY`)\n" +
+          "- Per-user key returned on admin user creation/rotation"
       }
     },
     schemas: {
-      /* ===== Common / Existing ===== */
+      // ===== Core =====
+      User: {
+        type: "object",
+        properties: {
+          _id: { type: "string", example: "68ce30aa8ac6618c45bfb533" },
+          name: { type: "string", example: "EEE Department Admin" },
+          email: { type: "string", example: "eeeadmin@egspec.org" },
+          role: { type: "string", enum: ["super_admin", "department_admin", "user"] },
+          department: { type: "string", nullable: true, example: "68cd4d6b778a4db47873d869" },
+          provider: { type: "string", enum: ["local", "google"], example: "local" },
+          picture: { type: "string", nullable: true },
+          givenName: { type: "string", nullable: true },
+          familyName: { type: "string", nullable: true },
+          locale: { type: "string", nullable: true },
+          emailVerified: { type: "boolean", example: false },
+          address: { type: "string", nullable: true },
+          isActive: { type: "boolean", example: true },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" }
+        }
+      },
       ErrorResponse: {
         type: "object",
         properties: {
           success: { type: "boolean", example: false },
-          message: { type: "string", example: "Validation failed" },
-          details: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                field: { type: "string", example: "email" },
-                msg: { type: "string", example: "Valid email is required" }
-              }
-            }
-          }
+          message: { type: "string", example: "Unauthorized" },
+          code: { type: "string", nullable: true }
         }
       },
-      PaginationMeta: {
+      // ===== Auth payloads =====
+      LoginRequest: {
         type: "object",
+        required: ["email", "password"],
         properties: {
-          total: { type: "integer", example: 125 },
-          page: { type: "integer", example: 1 },
-          limit: { type: "integer", example: 20 },
-          hasMore: { type: "boolean", example: true }
+          email: { type: "string", example: "raghavan@egspec.org" },
+          password: { type: "string", example: "232003" }
         }
       },
-
-      /* ===== Departments ===== */
-      Department: {
+      LoginResponse: {
         type: "object",
         properties: {
-          _id: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" },
-          id: { type: "string", example: "f2bb5f5e-4c9d-49af-9253-4f9c23e7a731" },
-          code: { type: "string", example: "EGSPEC/MECH" },
-          name: { type: "string", example: "B.E — Mechanical Engineering" },
-          shortcode: { type: "string", example: "MECH" },
-          isActive: { type: "boolean", example: true },
-          createdAt: { type: "string", format: "date-time" },
-          updatedAt: { type: "string", format: "date-time" }
-        }
-      },
-      CreateDepartmentRequest: {
-        type: "object",
-        required: ["code", "name", "shortcode"],
-        properties: {
-          code: { type: "string", example: "EGSPEC/MECH" },
-          name: { type: "string", example: "B.E — Mechanical Engineering" },
-          shortcode: { type: "string", example: "MECH" },
-          isActive: { type: "boolean", example: true }
-        }
-      },
-      UpdateDepartmentRequest: {
-        type: "object",
-        properties: {
-          code: { type: "string", example: "EGSPEC/MECH" },
-          name: { type: "string", example: "B.E — Mechanical Engineering (UG)" },
-          shortcode: { type: "string", example: "MECH" },
-          isActive: { type: "boolean", example: true }
-        }
-      },
-
-      /* ===== Users ===== */
-      User: {
-        type: "object",
-        properties: {
-          _id: { type: "string", example: "65015a71b05c3495bc6e5b5c" },
-          name: { type: "string", example: "Root Admin" },
-          email: { type: "string", example: "rootadmin@example.com" },
-          role: {
+          success: { type: "boolean", example: true },
+          token: { type: "string", description: "JWT (12h)" },
+          user: { $ref: "#/components/schemas/User" },
+          apiKey: {
             type: "string",
-            enum: ["super_admin", "department_admin", "user"],
-            example: "super_admin"
-          },
-          department: {
-            oneOf: [
-              { type: "string", nullable: true, example: "64fdc3f1a2b4c5d6e7f89012" },
-              { $ref: "#/components/schemas/Department" }
-            ]
-          },
-          provider: { type: "string", enum: ["local", "google"], example: "local" },
-          isActive: { type: "boolean", example: true },
-          lastLoginAt: { type: "string", format: "date-time", nullable: true },
-          createdAt: { type: "string", format: "date-time" },
-          updatedAt: { type: "string", format: "date-time" }
+            nullable: true,
+            description: "Returned for admins if stored or newly minted.",
+            example: "uk_193f8fbb2bf99e8c494041e67e0aaf8ad299831e"
+          }
         }
       },
       RegisterRequest: {
         type: "object",
         required: ["name", "email", "password"],
         properties: {
-          name: { type: "string", example: "Student User" },
-          email: { type: "string", example: "student@example.com" },
+          name: { type: "string", example: "John Doe" },
+          email: { type: "string", example: "john@example.com" },
           password: { type: "string", example: "secret123" },
-          departmentId: { type: "string", nullable: true, example: "64fdc3f1a2b4c5d6e7f89012" }
+          departmentId: { type: "string", nullable: true, example: "68cd4d6b778a4db47873d869" },
+          address: { type: "string", nullable: true }
         }
       },
-      LoginRequest: {
-        type: "object",
-        required: ["email", "password"],
-        properties: {
-          email: { type: "string", example: "rootadmin@example.com" },
-          password: { type: "string", example: "Admin@123" }
-        }
-      },
-      GoogleAuthRequest: {
-        type: "object",
-        required: ["idToken"],
-        properties: {
-          idToken: { type: "string", example: "eyJhbGciOiJSUzI1NiIsImtpZCI6..." },
-          departmentId: { type: "string", nullable: true, example: "64fdc3f1a2b4c5d6e7f89012" }
-        }
-      },
-      TokenResponse: {
+      RegisterResponse: {
         type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          token: { type: "string", example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." },
+          token: { type: "string" },
           user: { $ref: "#/components/schemas/User" }
         }
       },
-      AdminCreateUserRequest: {
+      // ===== Admin user management =====
+      CreateUserRequest: {
         type: "object",
         required: ["name", "email"],
         properties: {
@@ -188,7 +115,37 @@ const openapi = {
             enum: ["super_admin", "department_admin", "user"],
             example: "department_admin"
           },
-          departmentId: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" }
+          departmentId: { type: "string", nullable: true, example: "68cd4d6b778a4db47873d869" },
+          address: { type: "string", nullable: true },
+          picture: { type: "string", nullable: true }
+        }
+      },
+      CreateUserResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          data: { $ref: "#/components/schemas/User" },
+          apiKey: {
+            type: "string",
+            description: "Per-user API key (plaintext) — shown once on creation.",
+            example: "uk_193f8fbb2bf99e8c494041e67e0aaf8ad299831e"
+          }
+        }
+      },
+      ListUsersResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          meta: {
+            type: "object",
+            properties: {
+              total: { type: "integer", example: 1 },
+              page: { type: "integer", example: 1 },
+              limit: { type: "integer", example: 20 },
+              hasMore: { type: "boolean", example: false }
+            }
+          },
+          data: { type: "array", items: { $ref: "#/components/schemas/User" } }
         }
       },
       UpdateUserRequest: {
@@ -198,145 +155,42 @@ const openapi = {
           password: { type: "string" },
           role: { type: "string", enum: ["super_admin", "department_admin", "user"] },
           departmentId: { type: "string", nullable: true },
-          isActive: { type: "boolean" }
-        }
-      },
-
-      /* ====== EVENTS ====== */
-      EventContact: {
-        type: "object",
-        properties: { name: { type: "string" }, phone: { type: "string" }, email: { type: "string" } }
-      },
-      EventOnline: {
-        type: "object",
-        properties: {
-          provider: { type: "string", enum: ["google_meet", "zoom", "other"] },
-          url: { type: "string" }
-        }
-      },
-      EventOffline: {
-        type: "object",
-        properties: {
-          venueName: { type: "string" },
-          address: { type: "string" },
-          mapLink: { type: "string" }
-        }
-      },
-      EventPayment: {
-        type: "object",
-        properties: {
-          method: { type: "string", enum: ["none", "gateway", "qr"] },
-          gatewayProvider: { type: "string" },
-          gatewayLink: { type: "string" },
-          price: { type: "number" },
-          currency: { type: "string" },
-          qrImageUrl: { type: "string" },
-          qrInstructions: { type: "string" },
-          allowScreenshot: { type: "boolean" }
-        }
-      },
-      Event: {
-        type: "object",
-        properties: {
-          _id: { type: "string", example: "66f5a81e3f65bb57b8c84e91" },
-          name: { type: "string", example: "AI Symposium 2025" },
-          slug: { type: "string", example: "ai-symposium-2025-abcd" },
-          description: { type: "string" },
-          thumbnailUrl: { type: "string" },
-          mode: { type: "string", enum: ["online", "offline"] },
-          online: { $ref: "#/components/schemas/EventOnline" },
-          offline: { $ref: "#/components/schemas/EventOffline" },
-          startAt: { type: "string", format: "date-time" },
-          endAt: { type: "string", format: "date-time" },
-          department: {
-            oneOf: [{ type: "string" }, { $ref: "#/components/schemas/Department" }]
-          },
-          createdBy: {
-            oneOf: [{ type: "string" }, { $ref: "#/components/schemas/User" }]
-          },
-          payment: { $ref: "#/components/schemas/EventPayment" },
-          contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
-          departmentSite: { type: "string" },
-          contactEmail: { type: "string" },
-          extra: { type: "object", additionalProperties: true },
-          status: { type: "string", enum: ["draft", "published", "cancelled"] },
           isActive: { type: "boolean" },
-          createdAt: { type: "string", format: "date-time" },
-          updatedAt: { type: "string", format: "date-time" }
+          address: { type: "string", nullable: true },
+          picture: { type: "string", nullable: true }
         }
       },
-      CreateEventRequest: {
+      APIKeyRotateResponse: {
         type: "object",
-        required: ["name", "mode", "startAt", "endAt", "departmentId"],
         properties: {
-          name: { type: "string" },
-          description: { type: "string" },
-          thumbnailUrl: { type: "string" },
-          mode: { type: "string", enum: ["online", "offline"] },
-          online: { $ref: "#/components/schemas/EventOnline" },
-          offline: { $ref: "#/components/schemas/EventOffline" },
-          startAt: { type: "string", format: "date-time" },
-          endAt: { type: "string", format: "date-time" },
-          departmentId: { type: "string" },
-          payment: { $ref: "#/components/schemas/EventPayment" },
-          contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
-          departmentSite: { type: "string" },
-          contactEmail: { type: "string" },
-          extra: { type: "object" },
-          status: { type: "string", enum: ["draft", "published", "cancelled"] }
+          success: { type: "boolean", example: true },
+          apiKey: {
+            type: "string",
+            description: "New per-user API key (plaintext). Save it now.",
+            example: "uk_5f3b1b7aa0c24b76d9f0b8c1088a9e6345e1b2d9"
+          }
         }
       },
-      UpdateEventRequest: {
+      SimpleOkResponse: {
         type: "object",
         properties: {
-          name: { type: "string" },
-          description: { type: "string" },
-          thumbnailUrl: { type: "string" },
-          mode: { type: "string", enum: ["online", "offline"] },
-          online: { $ref: "#/components/schemas/EventOnline" },
-          offline: { $ref: "#/components/schemas/EventOffline" },
-          startAt: { type: "string", format: "date-time" },
-          endAt: { type: "string", format: "date-time" },
-          payment: { $ref: "#/components/schemas/EventPayment" },
-          contacts: { type: "array", items: { $ref: "#/components/schemas/EventContact" } },
-          departmentSite: { type: "string" },
-          contactEmail: { type: "string" },
-          extra: { type: "object" },
-          status: { type: "string", enum: ["draft", "published", "cancelled"] }
+          success: { type: "boolean", example: true },
+          message: { type: "string", example: "Logged out" }
         }
       }
-    },
-    parameters: {
-      Page: { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
-      Limit: { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
-      Sort: { name: "sort", in: "query", schema: { type: "string", example: "-createdAt,name" } },
-      Q: { name: "q", in: "query", schema: { type: "string", example: "MECH" } },
-      Role: { name: "role", in: "query", schema: { type: "string", enum: ["super_admin", "department_admin", "user"] } },
-      DepartmentId: { name: "departmentId", in: "query", schema: { type: "string", example: "64fdc3f1a2b4c5d6e7f89012" } },
-      IsActive: { name: "isActive", in: "query", schema: { type: "boolean" } },
-      UserId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "65015a71b05c3495bc6e5b5c" },
-      /* Departments */
-      DepartmentIdPath: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "64fdc3f1a2b4c5d6e7f89012" },
-      /* Events */
-      EventId: { name: "id", in: "path", required: true, schema: { type: "string" }, example: "66f5a81e3f65bb57b8c84e91" },
-      EventStatus: { name: "status", in: "query", schema: { type: "string", enum: ["draft", "published", "cancelled"] } },
-      EventUpcoming: { name: "upcoming", in: "query", schema: { type: "string", enum: ["true", "false"], example: "true" } }
     }
   },
-
-  // Global: API key required for all /api/* routes
-  security: [{ ApiKeyHeader: [] }],
-
+  security: [{ ApiKeyAuth: [] }],
   paths: {
+    // ===== Health =====
     "/health": {
       get: {
         tags: ["Health"],
-        summary: "Service health",
-        description: "No headers required. Returns API health info.",
         security: [],
+        summary: "Health check (no auth)",
         responses: {
-          "200": {
-            description: "OK",
+          200: {
+            description: "Service is up",
             content: {
               "application/json": {
                 schema: {
@@ -354,83 +208,59 @@ const openapi = {
       }
     },
 
-    /* =================== AUTH =================== */
-    "/api/v1/auth/register": {
-      post: {
-        tags: ["Auth"],
-        summary: "Register a normal user (role = user)",
-        description:
-          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\nNo Bearer token required.",
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: { $ref: "#/components/schemas/RegisterRequest" }
-            }
-          }
-        },
-        responses: {
-          "201": { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/TokenResponse" } } } },
-          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      }
-    },
+    // ===== Auth =====
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
-        summary: "Login with email/password",
-        description:
-          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\nNo Bearer token required. Returns a JWT token to be sent as `Authorization: Bearer <token>` in subsequent requests.",
+        summary: "Login (email/password) — requires x-api-key gate",
         requestBody: {
           required: true,
-          content: {
-            "application/json": {
-              schema: { $ref: "#/components/schemas/LoginRequest" }
-            }
-          }
+          content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } }
         },
         responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/TokenResponse" } } } },
-          "400": { description: "Invalid credentials", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: {
+            description: "Login success",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/LoginResponse" } } }
+          },
+          400: { description: "Invalid credentials", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          401: { description: "Unauthorized (missing/invalid x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
-    "/api/v1/auth/google": {
+    "/api/v1/auth/register": {
       post: {
         tags: ["Auth"],
-        summary: "Login/Register with Google ID Token",
-        description:
-          "Headers required: `x-api-key`, `Content-Type: application/json`, `Accept: application/json`.\nNo Bearer token required. Send `idToken` from Google Identity Services; backend verifies it and returns a JWT.",
+        summary: "Self register (role=user)",
         requestBody: {
           required: true,
-          content: {
-            "application/json": {
-              schema: { $ref: "#/components/schemas/GoogleAuthRequest" }
-            }
-          }
+          content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterRequest" } } }
         },
         responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/TokenResponse" } } } },
-          "401": { description: "Invalid Google token", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          201: { description: "Registered", content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterResponse" } } } },
+          401: { description: "Unauthorized (x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          409: { description: "User already exists" },
+          422: { description: "Validation failed" }
         }
       }
     },
     "/api/v1/auth/me": {
       get: {
         tags: ["Auth"],
-        summary: "Get current user",
-        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        summary: "Current principal (from x-api-key gate)",
         responses: {
-          "200": {
-            description: "OK",
+          200: {
+            description: "Current user",
             content: {
               "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } } }
+                schema: {
+                  type: "object",
+                  properties: { success: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } }
+                }
               }
             }
           },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          401: { description: "Unauthorized (x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
@@ -438,329 +268,116 @@ const openapi = {
       post: {
         tags: ["Auth"],
         summary: "Logout (client clears token)",
-        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        responses: { "200": { description: "OK" } }
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }
+        }
       }
     },
 
-    /* =================== USERS (ADMIN) =================== */
+    // ===== Admin Users =====
     "/api/v1/auth/users": {
       post: {
-        tags: ["Users"],
-        summary: "Create a user (admin only).",
-        description: [
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-          "- **super_admin**: can create any role. If creating `department_admin`, `departmentId` is **required**.",
-          "- **department_admin**: can create **role = user** only; department is forced to creator’s department."
-        ].join("\n"),
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        tags: ["Admin Users"],
+        summary: "Create user (super_admin & department_admin). Admin create returns apiKey.",
         requestBody: {
           required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/AdminCreateUserRequest" } } }
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserRequest" } } }
         },
         responses: {
-          "201": {
-            description: "Created",
-            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } }
-          },
-          "403": { description: "Forbidden (role constraints)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          201: { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserResponse" } } } },
+          401: { description: "Unauthorized (x-api-key)" },
+          403: { description: "Forbidden (role not allowed)" },
+          409: { description: "User already exists" },
+          422: { description: "Validation failed" }
         }
       },
       get: {
-        tags: ["Users"],
-        summary: "List users (admin only) with pagination & filtering",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.\nSupports `page`, `limit`, `sort`, `role`, `departmentId`, `q`, `isActive`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
+        tags: ["Admin Users"],
+        summary: "List users (scoped). super_admin & department_admin",
         parameters: [
-          { $ref: "#/components/parameters/Page" },
-          { $ref: "#/components/parameters/Limit" },
-          { $ref: "#/components/parameters/Sort" },
-          { $ref: "#/components/parameters/Role" },
-          { $ref: "#/components/parameters/DepartmentId" },
-          { $ref: "#/components/parameters/Q" },
-          { $ref: "#/components/parameters/IsActive" }
+          { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
+          { name: "sort", in: "query", schema: { type: "string", example: "-createdAt" } },
+          { name: "role", in: "query", schema: { type: "string", enum: ["super_admin", "department_admin", "user"] } },
+          { name: "departmentId", in: "query", schema: { type: "string" } },
+          { name: "q", in: "query", schema: { type: "string" } },
+          { name: "isActive", in: "query", schema: { type: "boolean" } }
         ],
         responses: {
-          "200": {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    success: { type: "boolean", example: true },
-                    meta: { $ref: "#/components/schemas/PaginationMeta" },
-                    data: { type: "array", items: { $ref: "#/components/schemas/User" } }
-                  }
-                }
-              }
-            }
-          },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListUsersResponse" } } } },
+          401: { description: "Unauthorized (x-api-key)" },
+          403: { description: "Forbidden" }
         }
       }
     },
     "/api/v1/auth/users/{id}": {
       get: {
-        tags: ["Users"],
-        summary: "Get user by id (scoped by role)",
-        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/UserId" }],
+        tags: ["Admin Users"],
+        summary: "Get user by id (scoped)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "200": {
-            description: "OK",
-            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } }
-          },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "Not found" },
+          422: { description: "Invalid id" }
         }
       },
       patch: {
-        tags: ["Users"],
-        summary: "Update user (partial)",
-        description: [
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-          "- **super_admin**: can change role/department/isActive.",
-          "- **department_admin**: cannot change roles or move users across departments.",
-          "- **user**: can update own name/password."
-        ].join("\n"),
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/UserId" }],
+        tags: ["Admin Users"],
+        summary: "Update user (scoped)",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateUserRequest" } } }
         },
         responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
-          "403": { description: "Forbidden (scope constraints)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "Not found" },
+          422: { description: "Invalid id" }
         }
       },
       delete: {
-        tags: ["Users"],
+        tags: ["Admin Users"],
         summary: "Soft delete user (isActive=false)",
-        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/UserId" }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "Not found" }
         }
       }
     },
 
-    /* =================== DEPARTMENTS =================== */
-    "/api/v1/departments": {
-      get: {
-        tags: ["Departments"],
-        summary: "List departments (public read with API key; JWT optional)",
-        description: [
-          "- Headers required: `x-api-key`, `Accept: application/json`.",
-          "- By default returns only `isActive=true`.",
-          "- If caller is **super_admin** (JWT) and passes `includeInactive=true`, inactive departments are included.",
-          "- Filters: `page`, `limit`, `sort` (e.g., `name`), `q`, `includeInactive`."
-        ].join("\n"),
-        parameters: [
-          { $ref: "#/components/parameters/Page" },
-          { $ref: "#/components/parameters/Limit" },
-          { name: "sort", in: "query", schema: { type: "string", example: "name" } },
-          { $ref: "#/components/parameters/Q" },
-          { name: "includeInactive", in: "query", schema: { type: "string", enum: ["true", "false"], example: "false" } }
-        ],
-        responses: {
-          "200": {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    success: { type: "boolean", example: true },
-                    meta: { $ref: "#/components/schemas/PaginationMeta" },
-                    data: { type: "array", items: { $ref: "#/components/schemas/Department" } }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
+    // ===== API Keys =====
+    "/api/v1/auth/apikey/rotate/{userId}": {
       post: {
-        tags: ["Departments"],
-        summary: "Create department (super_admin only)",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateDepartmentRequest" } } }
-        },
+        tags: ["API Keys"],
+        summary: "Rotate per-user API key (admin can rotate scoped users; user can rotate self)",
+        parameters: [{ name: "userId", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "201": {
-            description: "Created",
-            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } }
-          },
-          "409": { description: "Duplicate code/shortcode", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/APIKeyRotateResponse" } } } },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "User not found" },
+          422: { description: "Invalid user id" }
         }
       }
     },
-    "/api/v1/departments/{id}": {
-      get: {
-        tags: ["Departments"],
-        summary: "Get department by id (public read with API key; JWT optional)",
-        description: [
-          "- Headers required: `x-api-key`, `Accept: application/json`.",
-          "- By default only returns if `isActive=true`.",
-          "- If caller is **super_admin** (JWT) and passes `includeInactive=true`, an inactive department can be retrieved."
-        ].join("\n"),
-        parameters: [
-          { $ref: "#/components/parameters/DepartmentIdPath" },
-          { name: "includeInactive", in: "query", schema: { type: "string", enum: ["true", "false"], example: "false" } }
-        ],
-        responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      },
-      patch: {
-        tags: ["Departments"],
-        summary: "Update department (super_admin only)",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/DepartmentIdPath" }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateDepartmentRequest" } } }
-        },
-        responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } },
-          "409": { description: "Duplicate code/shortcode", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      },
-      delete: {
-        tags: ["Departments"],
-        summary: "Delete department (soft) — super_admin only",
-        description:
-          "Sets `isActive=false`. Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/DepartmentIdPath" }],
-        responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      }
-    },
-
-    /* =================== EVENTS =================== */
-    "/api/v1/events": {
-      get: {
-        tags: ["Events"],
-        summary: "List events (public read with API key; JWT optional)",
-        description: [
-          "- Headers required: `x-api-key`, `Accept: application/json`.",
-          "- If **no JWT**, only `published` events are returned.",
-          "- If **department_admin** (JWT), listing is scoped to own department by default (or pass `departmentId` matching own dept).",
-          "- If **super_admin** (JWT), can list all or filter by `departmentId`.",
-          "- Filters: `page`, `limit`, `sort` (e.g. `-startAt`), `departmentId`, `status`, `q`, `upcoming=true`."
-        ].join("\n"),
-        parameters: [
-          { $ref: "#/components/parameters/Page" },
-          { $ref: "#/components/parameters/Limit" },
-          { name: "sort", in: "query", schema: { type: "string", example: "-startAt" } },
-          { $ref: "#/components/parameters/DepartmentId" },
-          { $ref: "#/components/parameters/EventStatus" },
-          { name: "q", in: "query", schema: { type: "string", example: "AI" } },
-          { $ref: "#/components/parameters/EventUpcoming" }
-        ],
-        responses: {
-          "200": {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    success: { type: "boolean", example: true },
-                    meta: { $ref: "#/components/schemas/PaginationMeta" },
-                    data: { type: "array", items: { $ref: "#/components/schemas/Event" } }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
+    "/api/v1/auth/apikey/revoke/{userId}": {
       post: {
-        tags: ["Events"],
-        summary: "Create event (department_admin or super_admin)",
-        description: [
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-          "- **department_admin**: can create only for **own** department (`departmentId` must match).",
-          "- **super_admin**: can create for any department."
-        ].join("\n"),
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateEventRequest" } } }
-        },
+        tags: ["API Keys"],
+        summary: "Revoke per-user API key (clears plaintext + hash + prefix)",
+        parameters: [{ name: "userId", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "201": {
-            description: "Created",
-            content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } }
-          },
-          "403": { description: "Forbidden (scope/role)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      }
-    },
-    "/api/v1/events/{id}": {
-      get: {
-        tags: ["Events"],
-        summary: "Get event by id",
-        description: [
-          "Headers required: `x-api-key`, `Accept: application/json`.",
-          "- Public readers (no JWT) can only access `published` events.",
-          "- **department_admin** can only access events of their own department.",
-          "- **super_admin** can access any."
-        ].join("\n"),
-        parameters: [{ $ref: "#/components/parameters/EventId" }],
-        responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
-          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      },
-      patch: {
-        tags: ["Events"],
-        summary: "Update event (partial) — department_admin (own) or super_admin",
-        description:
-          "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Content-Type: application/json`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/EventId" }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateEventRequest" } } }
-        },
-        responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } },
-          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "422": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
-        }
-      },
-      delete: {
-        tags: ["Events"],
-        summary: "Delete event (soft delete) — department_admin (own) or super_admin",
-        description: "Headers required: `x-api-key`, `Authorization: Bearer <token>`, `Accept: application/json`.",
-        security: [{ ApiKeyHeader: [], BearerAuth: [] }],
-        parameters: [{ $ref: "#/components/parameters/EventId" }],
-        responses: {
-          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "User not found" },
+          422: { description: "Invalid user id" }
         }
       }
     }

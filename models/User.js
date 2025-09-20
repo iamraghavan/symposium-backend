@@ -13,7 +13,7 @@ const userSchema = new mongoose.Schema(
       index: true
     },
 
-    password: { type: String }, // not required for Google-only accounts
+    password: { type: String },
 
     role: {
       type: String,
@@ -22,7 +22,6 @@ const userSchema = new mongoose.Schema(
       index: true
     },
 
-    // Reference to Department by ObjectId
     department: { type: mongoose.Schema.Types.ObjectId, ref: "Department", default: null },
 
     // Google identity + profile
@@ -30,14 +29,25 @@ const userSchema = new mongoose.Schema(
     provider: { type: String, enum: ["local", "google"], default: "local" },
 
     // Rich profile
-    picture: { type: String, default: null },       // profile image url
+    picture: { type: String, default: null },
     givenName: { type: String, default: null },
     familyName: { type: String, default: null },
     locale: { type: String, default: null },
     emailVerified: { type: Boolean, default: false },
 
-    // Optional address (not provided by basic Google userinfo; set by client if needed)
+    // Optional address
     address: { type: String, default: null },
+
+    // --- API Key (per-user) ---
+    // Plaintext API key (hidden by default). Only select it when you *really* need it.
+    apiKey: { type: String, default: null, select: false },
+
+    // Hashed + prefix for verification
+    apiKeyHash: { type: String, default: null, select: false },
+    apiKeyPrefix: { type: String, default: null, index: true }, // first 8 chars
+    apiKeyCreatedAt: { type: Date, default: null },
+    apiKeyLastUsedAt: { type: Date, default: null },
+    apiKeyRevoked: { type: Boolean, default: false },
 
     isActive: { type: Boolean, default: true },
     lastLoginAt: { type: Date }

@@ -1,0 +1,183 @@
+{
+  "info": {
+    "name": "EGSPEC Auth (API Key + Admin)",
+    "_postman_id": "b6f0c124-7e61-4df0-9f0a-6d5fd5d6a9c1",
+    "description": "Auth flow: super admin login (global API key), create department admin (returns apiKey), department admin login (global key), then call protected endpoints with the per-user apiKey.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0) Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/health"
+      }
+    },
+    {
+      "name": "1) Super Admin Login (email/password)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.code === 200);",
+              "const json = pm.response.json();",
+              "pm.environment.set(\"sa_jwt\", json.token || \"\");",
+              "if (json.apiKey) {",
+              "  pm.environment.set(\"sa_api_key\", json.apiKey);",
+              "} else {",
+              "  // if you stored plaintext apiKey in DB, login should return it for admins",
+              "  // if not present, keep using global key until you rotate/issue one",
+              "}",
+              "pm.environment.set(\"sa_email\", pm.variables.get(\"sa_email\"));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-api-key", "value": "{{global_api_key}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{sa_email}}\",\n  \"password\": \"{{sa_password}}\"\n}"
+        },
+        "url": "{{base_url}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "2) Create Department Admin (returns apiKey)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"status 201\", () => pm.response.code === 201);",
+              "const json = pm.response.json();",
+              "pm.environment.set(\"dept_admin_id\", json.data?._id || \"\");",
+              "pm.environment.set(\"dept_admin_email\", json.data?.email || \"\");",
+              "if (json.apiKey) {",
+              "  pm.environment.set(\"dept_admin_api_key\", json.apiKey);",
+              "} else {",
+              "  pm.environment.unset(\"dept_admin_api_key\");",
+              "}",
+              "pm.environment.set(\"dept_id\", json.data?.department || pm.environment.get(\"dept_id\"));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-api-key", "value": "{{global_api_key}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"EEE Department Admin\",\n  \"email\": \"eeeadmin@egspec.org\",\n  \"password\": \"EEE@123\",\n  \"role\": \"department_admin\",\n  \"departmentId\": \"{{dept_id}}\"\n}"
+        },
+        "url": "{{base_url}}/api/v1/auth/users"
+      }
+    },
+    {
+      "name": "3) Department Admin Login (email/password, use global key for gate)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.code === 200);",
+              "const json = pm.response.json();",
+              "pm.environment.set(\"dept_admin_jwt\", json.token || \"\");",
+              "if (json.apiKey) {",
+              "  pm.environment.set(\"dept_admin_api_key\", json.apiKey);",
+              "}",
+              "pm.environment.set(\"dept_admin_email\", pm.variables.get(\"dept_admin_email\") || \"eeeadmin@egspec.org\");"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-api-key", "value": "{{global_api_key}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{dept_admin_email}}\",\n  \"password\": \"EEE@123\"\n}"
+        },
+        "url": "{{base_url}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "4) Me (as Dept Admin using per-user API key)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{dept_admin_api_key}}" }],
+        "url": "{{base_url}}/api/v1/auth/me"
+      }
+    },
+    {
+      "name": "5) List Users (as Dept Admin via per-user key)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{dept_admin_api_key}}" }],
+        "url": "{{base_url}}/api/v1/auth/users?limit=10"
+      }
+    },
+    {
+      "name": "6) Me (as Super Admin using GLOBAL key)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{global_api_key}}" }],
+        "url": "{{base_url}}/api/v1/auth/me"
+      }
+    },
+    {
+      "name": "7) Rotate Dept Admin API Key (returns new key)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.code === 200);",
+              "const json = pm.response.json();",
+              "if (json.apiKey) { pm.environment.set(\"dept_admin_api_key\", json.apiKey); }"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-api-key", "value": "{{global_api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/api/v1/auth/apikey/rotate/{{dept_admin_id}}"
+      }
+    },
+    {
+      "name": "8) Dept Admin Me (after rotate, use NEW key)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{dept_admin_api_key}}" }],
+        "url": "{{base_url}}/api/v1/auth/me"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "global_api_key", "value": "rjfqrur9L0v2XNzx574DI1Djejii70JP5S" },
+    { "key": "sa_email", "value": "raghavan@egspec.org" },
+    { "key": "sa_password", "value": "232003" },
+    { "key": "dept_id", "value": "68cd4d6b778a4db47873d869" }
+  ]
+}

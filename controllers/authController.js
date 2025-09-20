@@ -3,9 +3,13 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const mongoose = require("mongoose");
+const crypto = require("crypto");
+
 const User = require("../models/User");
 const Department = require("../models/Department");
 const logger = require("../utils/logger");
+
+/* ============================= Google OAuth ============================= */
 
 const googleClientId = process.env.Google_Client_ID || process.env.GOOGLE_CLIENT_ID;
 const googleClientSecret = process.env.Google_Client_Secret || process.env.GOOGLE_CLIENT_SECRET;
@@ -19,12 +23,47 @@ const oauth2Client = new OAuth2Client({
 
 /* ============================= Helpers ============================= */
 
+// Generate a human-pasteable API key: "uk_" + 40-hex chars (total 43)
+const generateRawApiKey = () => "uk_" + crypto.randomBytes(20).toString("hex");
+
+// Hash with sha256 (fast lookup); swap to bcrypt if you prefer KDF hardness
+const hashApiKey = (raw) =>
+  crypto.createHash("sha256").update(String(raw), "utf8").digest("hex");
+
+const getPrefix = (raw) => String(raw).slice(0, 8);
+
+// Persist apiKey (plaintext) + hash + prefix
+async function setUserApiKey(user) {
+  const raw = generateRawApiKey();
+  user.apiKey = raw;                    // plaintext (model has select:false)
+  user.apiKeyHash = hashApiKey(raw);
+  user.apiKeyPrefix = getPrefix(raw);
+  user.apiKeyCreatedAt = new Date();
+  user.apiKeyRevoked = false;
+  await user.save();
+  return raw; // return plaintext ONCE
+}
+
+async function clearUserApiKey(user) {
+  user.apiKey = null;
+  user.apiKeyHash = null;
+  user.apiKeyPrefix = null;
+  user.apiKeyCreatedAt = null;
+  user.apiKeyLastUsedAt = null;
+  user.apiKeyRevoked = true;
+  await user.save();
+}
+
 const generateToken = (user) =>
   jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "12h" });
 
+// Remove sensitive stuff from response
 const sanitizeUser = (userDoc) => {
   const u = userDoc?.toObject ? userDoc.toObject() : userDoc;
-  if (u) delete u.password;
+  if (!u) return u;
+  delete u.password;
+  delete u.apiKey;       // avoid leaking unless explicitly returning as separate field
+  delete u.apiKeyHash;
   return u;
 };
 
@@ -147,7 +186,7 @@ exports.register = async (req, res, next) => {
   }
 };
 
-// Login (email/password)
+// Login (email/password) — returns apiKey for admins; creates one if missing
 exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
@@ -157,19 +196,34 @@ exports.login = async (req, res, next) => {
         { field: "password", msg: "Password is required" }
       ]);
 
-    const user = await User.findOne({ email: email.toLowerCase(), isActive: true });
+    // include +apiKey so we can return it
+    const user = await User.findOne({ email: email.toLowerCase(), isActive: true }).select("+apiKey");
     if (!user) return bad(res, 400, "Invalid credentials");
 
     const isMatch = user.password && (await bcrypt.compare(password, user.password));
     if (!isMatch) return bad(res, 400, "Invalid credentials");
 
     user.lastLoginAt = new Date();
-    await user.save();
+
+    // expose apiKey only for admins; mint if missing
+    let apiKeyToReturn = undefined;
+    const isAdmin = ["super_admin", "department_admin"].includes(user.role);
+    if (isAdmin) {
+      if (!user.apiKey) {
+        apiKeyToReturn = await setUserApiKey(user); // creates + stores plaintext/hash/prefix
+      } else {
+        apiKeyToReturn = user.apiKey; // already stored
+        await user.save();
+      }
+    } else {
+      await user.save();
+    }
 
     return res.status(200).json({
       success: true,
       token: generateToken(user),
-      user: sanitizeUser(user)
+      user: sanitizeUser(user),
+      ...(apiKeyToReturn ? { apiKey: apiKeyToReturn } : {})
     });
   } catch (error) {
     logger.error("Login error", { error: error.message });
@@ -198,10 +252,8 @@ exports.googleAuth = async (req, res, next) => {
     const payload = ticket.getPayload() || {};
     if (!isEmail(payload.email)) return bad(res, 401, "Google authentication failed");
 
-    // Upsert user + profile
     let user = await upsertUserFromGoogle({ profile: payload, departmentId });
 
-    // Optionally store address if client sent it
     if (isNonEmpty(address)) {
       user.address = address.trim();
       await user.save();
@@ -301,7 +353,7 @@ exports.logout = async (_req, res) => {
 
 /* ============================== ADMIN ============================= */
 
-// Admin Create User
+// Admin Create User — auto-generate & store API key; return plaintext once
 exports.adminCreateUser = async (req, res, next) => {
   try {
     const { name, email, password, role = "user", departmentId, address, picture } = req.body || {};
@@ -359,7 +411,14 @@ exports.adminCreateUser = async (req, res, next) => {
       isActive: true
     });
 
-    return res.status(201).json({ success: true, data: sanitizeUser(user) });
+    // Generate & store API key (plaintext + hash + prefix)
+    const plaintextApiKey = await setUserApiKey(user);
+
+    return res.status(201).json({
+      success: true,
+      data: sanitizeUser(user),
+      apiKey: plaintextApiKey // shown once
+    });
   } catch (error) {
     logger.error("adminCreateUser error", { error: error.message });
     next(error);
@@ -388,7 +447,7 @@ exports.listUsers = async (req, res, next) => {
         .sort(sort)
         .skip(skip)
         .limit(limit)
-        .select("-password")
+        .select("-password") // apiKey & apiKeyHash are select:false, so safe
         .populate("department", "id code name shortcode")
         .lean(),
       User.countDocuments(filter)
@@ -405,7 +464,7 @@ exports.listUsers = async (req, res, next) => {
   }
 };
 
-// Get User by ID (scoped, ObjectId-aware)
+// Get User by ID (scoped)
 exports.getUser = async (req, res, next) => {
   try {
     const { id } = req.params || {};
@@ -435,7 +494,7 @@ exports.updateUser = async (req, res, next) => {
     const { id } = req.params || {};
     if (!isObjectId(id)) return bad(res, 422, "Validation failed", [{ field: "id", msg: "Invalid user id" }]);
 
-    const target = await User.findById(id);
+    const target = await User.findById(id).select("+apiKey"); // allow API key maintenance if needed
     if (!target) return bad(res, 404, "User not found");
 
     // Scope checks
@@ -484,6 +543,7 @@ exports.updateUser = async (req, res, next) => {
       }
       if (typeof isActive !== "undefined") target.isActive = !!isActive;
     }
+
     await target.save();
 
     return res.status(200).json({ success: true, data: sanitizeUser(target) });
@@ -516,4 +576,46 @@ exports.deleteUser = async (req, res, next) => {
     logger.error("deleteUser error", { error: error.message });
     next(error);
   }
+};
+
+/* ============================== API KEY MGMT ============================= */
+
+// Rotate API key (creates new plaintext + hash + prefix; returns plaintext)
+exports.rotateApiKey = async (req, res) => {
+  const targetId = req.params.userId || req.user._id;
+  if (!isObjectId(targetId)) return bad(res, 422, "Invalid user id");
+
+  const target = await User.findById(targetId).select("+apiKey");
+  if (!target) return bad(res, 404, "User not found");
+
+  if (req.user.role === "department_admin" &&
+      String(target.department || "") !== String(req.user.department || "")) {
+    return bad(res, 403, "Forbidden");
+  }
+  if (req.user.role === "user" && String(target._id) !== String(req.user._id)) {
+    return bad(res, 403, "Forbidden");
+  }
+
+  const plaintext = await setUserApiKey(target);
+  return res.status(200).json({ success: true, apiKey: plaintext });
+};
+
+// Revoke API key (clears plaintext + hash + prefix)
+exports.revokeApiKey = async (req, res) => {
+  const targetId = req.params.userId || req.user._id;
+  if (!isObjectId(targetId)) return bad(res, 422, "Invalid user id");
+
+  const target = await User.findById(targetId).select("+apiKey");
+  if (!target) return bad(res, 404, "User not found");
+
+  if (req.user.role === "department_admin" &&
+      String(target.department || "") !== String(req.user.department || "")) {
+    return bad(res, 403, "Forbidden");
+  }
+  if (req.user.role === "user" && String(target._id) !== String(req.user._id)) {
+    return bad(res, 403, "Forbidden");
+  }
+
+  await clearUserApiKey(target);
+  return res.status(200).json({ success: true, message: "API key revoked" });
 };
