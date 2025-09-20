@@ -376,22 +376,25 @@ exports.deleteEvent = async (req, res, next) => {
     const { id } = req.params || {};
     if (!isObjectId(id)) return bad(res, 422, "Invalid event id");
 
+    // load the event to run scope checks
     const doc = await Event.findById(id);
-    if (!doc || !doc.isActive) return bad(res, 404, "Event not found");
+    if (!doc) return bad(res, 404, "Event not found");
 
+    // scope guard
     if (!mustOwnDepartmentOrSuper(req.user, doc.department)) {
       return bad(res, 403, "Forbidden");
     }
 
-    doc.isActive = false;
-    await doc.save();
+    // HARD DELETE from DB
+    await Event.deleteOne({ _id: id });
 
-    return res.status(200).json({ success: true, message: "Event deleted" });
+    return res.status(200).json({ success: true, message: "Event permanently deleted" });
   } catch (err) {
     logger.error("deleteEvent error", { error: err.message });
     next(err);
   }
 };
+
 
 /* ----------------------- ADMIN: list by creator ----------------------- */
 /**
