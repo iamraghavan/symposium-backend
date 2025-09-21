@@ -1,24 +1,16 @@
 const express = require("express");
-const bodyParser = require("body-parser");
+const apiKeyGate = require("../middleware/apiKey");
 const ctrl = require("../controllers/paymentController");
 
 const router = express.Router();
 
-// Razorpay sends webhooks as raw body for signature verification.
-// Use raw parser JUST for this route.
-router.post(
-  "/webhook",
-  bodyParser.raw({ type: "*/*" }),
-  (req, _res, next) => {
-    try {
-      // convert raw buffer to parsed JSON for controller
-      req.body = JSON.parse(req.body.toString("utf8"));
-      next();
-    } catch (e) {
-      next(e);
-    }
-  },
-  ctrl.webhook
-);
+// Protect with API key (per-user key recommended)
+router.use(apiKeyGate);
+
+// Create order for a registration (only for still-unpaid people)
+router.post("/order", ctrl.createOrder);
+
+// Verify payment signature and finalize registration
+router.post("/verify", ctrl.verify);
 
 module.exports = router;
