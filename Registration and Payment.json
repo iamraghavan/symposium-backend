@@ -1,0 +1,229 @@
+{
+  "info": {
+    "_postman_id": "6f3e6d4e-16f4-4a4a-9f7c-registrations-payments",
+    "name": "Event API — Registrations & Payments (Razorpay)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Endpoints for creating registrations, listing/reading them, verifying (admin), and receiving Razorpay webhooks."
+  },
+  "item": [
+    {
+      "name": "Registrations",
+      "item": [
+        {
+          "name": "Create Registration (individual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-api-key", "value": "{{api_key}}", "type": "text" },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/registrations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "registrations"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_id}}\",\n  \"eventName\": \"Sample Event\",\n  \"type\": \"individual\",\n  \"notes\": \"via Postman\"\n}"
+            },
+            "description": "Creates a registration. If the user has already paid the one-time fee, this returns confirmed immediately; otherwise returns a Razorpay order to complete payment."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Basic 2xx check",
+                  "pm.test('Status is 201 or 200', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "// Save registration_id for convenience",
+                  "try {",
+                  "  const json = pm.response.json();",
+                  "  const id = json.registration && json.registration._id;",
+                  "  if (id) pm.collectionVariables.set('registration_id', id);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Registration (team)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-api-key", "value": "{{api_key}}", "type": "text" },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/registrations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "registrations"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_id}}\",\n  \"eventName\": \"Hack Sprint\",\n  \"type\": \"team\",\n  \"team\": {\n    \"name\": \"Alpha\",\n    \"members\": [\n      { \"name\": \"Alice\", \"email\": \"alice@example.com\" },\n      { \"name\": \"Bob\", \"email\": \"bob@example.com\" }\n    ],\n    \"size\": 2\n  },\n  \"notes\": \"team via Postman\"\n}"
+            },
+            "description": "Creates a team registration. Only UNPAID members are charged (₹250 per unpaid member). Returns a Razorpay order if payment is required."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 or 200', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "try {",
+                  "  const json = pm.response.json();",
+                  "  const id = json.registration && json.registration._id;",
+                  "  if (id) pm.collectionVariables.set('registration_id', id);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Registrations",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-api-key", "value": "{{api_key}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/registrations/my",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "registrations", "my"]
+            },
+            "description": "Returns registrations for the API key's user."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Registration by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-api-key", "value": "{{api_key}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/registrations/{{registration_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "registrations", "{{registration_id}}"]
+            },
+            "description": "Fetch a single registration (owner or admin)."
+          },
+          "response": []
+        },
+        {
+          "name": "Admin — Verify Payment (manual backstop)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "x-api-key", "value": "{{api_key}}", "type": "text" },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/registrations/{{registration_id}}/verify-payment",
+              "host": ["{{base_url}}"],
+              "path": [
+                "api",
+                "v1",
+                "registrations",
+                "{{registration_id}}",
+                "verify-payment"
+              ]
+            },
+            "description": "Admin-only: marks a registration as paid/confirmed. Normally webhooks will do this automatically."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Razorpay Webhook — payment.captured (example payload)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-razorpay-signature",
+                "value": "{{webhook_signature}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/payments/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "payments", "webhook"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"payment.captured\",\n  \"payload\": {\n    \"payment\": {\n      \"entity\": {\n        \"id\": \"pay_MOCKPAYID123\",\n        \"entity\": \"payment\",\n        \"amount\": 25000,\n        \"currency\": \"INR\",\n        \"status\": \"captured\",\n        \"order_id\": \"order_MOCKORDERID123\",\n        \"email\": \"leader@example.com\"\n      }\n    }\n  },\n  \"contains\": [\"payment\"]\n}"
+            },
+            "description": "Simulate Razorpay webhook. Use a **valid** signature in {{webhook_signature}} when testing end-to-end with Razorpay. In local dev you can temporarily bypass signature verification or compute it using WEBHOOK_SECRET over this exact raw body."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Webhook accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000", "type": "string" },
+    {
+      "key": "api_key",
+      "value": "rjfqrur9L0v2XNzx574DI1Djejii70JP5S",
+      "type": "string"
+    },
+    {
+      "key": "event_id",
+      "value": "68cd9325ec8d855acd5fcd81",
+      "type": "string"
+    },
+    { "key": "registration_id", "value": "", "type": "string" },
+    {
+      "key": "webhook_signature",
+      "value": "REPLACE_WITH_COMPUTED_SIGNATURE",
+      "type": "string"
+    }
+  ]
+}

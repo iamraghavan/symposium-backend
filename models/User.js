@@ -38,6 +38,9 @@ const userSchema = new mongoose.Schema(
     // Optional address
     address: { type: String, default: null },
 
+    hasPaidEventFee: { type: Boolean, default: false, index: true },
+eventFeePaidAt: { type: Date, default: null },
+
     // --- API Key (per-user) ---
     // Plaintext API key (hidden by default). Only select it when you *really* need it.
     apiKey: { type: String, default: null, select: false },
@@ -52,7 +55,8 @@ const userSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     lastLoginAt: { type: Date }
   },
-  { timestamps: true }
+  { timestamps: true },
+  
 );
 
 module.exports = mongoose.model("User", userSchema);

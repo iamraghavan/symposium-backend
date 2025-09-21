@@ -1,260 +1,136 @@
-// controllers/registrationController.js
-const mongoose = require("mongoose");
 const Registration = require("../models/Registration");
-const Event = require("../models/Event");
-const logger = require("../utils/logger");
+const User = require("../models/User");
+const Payment = require("../models/Payment");
+const razorpay = require("../config/razorpay");
 
-const isObjectId = (id) => mongoose.isValidObjectId(id);
-const bad = (res, status, message, details) =>
-  res.status(status).json({ success: false, message, ...(details ? { details } : {}) });
+const FEE = Number(process.env.PAYMENT_FEE_INR || 250);
+
+// Collect all emails that must have paid at least once
+function uniqueEmailsFromRegistration(reg) {
+  if (reg.type === "individual") return [reg.userEmail].filter(Boolean);
+  const memberEmails = (reg.team?.members || []).map(m => m.email).filter(Boolean);
+  const owner = reg.userEmail ? [reg.userEmail] : [];
+  return Array.from(new Set([...owner, ...memberEmails]));
+}
 
 /**
- * POST /api/v1/registrations
- * Body:
- *  - eventId (required)
- *  - type: "individual" | "team" (required)
- *  - team?: { name?, members:[{name,email}] }  // leader is the authenticated user; do not include leader here
- *  - notes?: string
- *
- * Only Google-signed users may register (provider === 'google').
- * Free event => auto-confirmed.
- * Paid event => payment.status = "pending".
+ * Create registration:
+ * - If every person (individual or team members + leader) has already paid once → FREE & auto-confirmed
+ * - Else create a Razorpay Order for only the UNPAID persons (₹250 each)
+ * - No manual verification anywhere; webhook will confirm and mark users paid-for-life
  */
 exports.create = async (req, res, next) => {
   try {
-    const { eventId, type, team, notes } = req.body || {};
-    const actor = req.user;
+    if (!req.user) return res.status(401).json({ success: false, message: "Unauthorized" });
 
-    if (!actor) return bad(res, 401, "Unauthorized");
-    if (actor.provider !== "google") {
-      // ⬇️ single-line, clear message
-      return bad(res, 403, "Registration requires Google login");
-    }
+    const { eventId, type, team, notes } = req.body;
+    if (!eventId || !type) return res.status(400).json({ success: false, message: "eventId and type are required" });
 
-    if (!isObjectId(eventId)) return bad(res, 422, "Invalid eventId");
-    if (!["individual", "team"].includes(type)) {
-      return bad(res, 422, "type must be 'individual' or 'team'");
-    }
+    const leader = await User.findById(req.user._id);
+    if (!leader) return res.status(404).json({ success: false, message: "User not found" });
 
-    const ev = await Event.findById(eventId).lean();
-    if (!ev || !ev.isActive) return bad(res, 404, "Event not found");
-    if (ev.status !== "published") return bad(res, 403, "Event is not open for registration");
-
-    // Prevent duplicate active registrations by same user
-    const dup = await Registration.findOne({
+    // Create the registration (unique index on (event,user,status) prevents dup active regs)
+    const reg = await Registration.create({
       event: eventId,
-      user: actor._id,
-      status: { $in: ["pending", "confirmed"] }
-    }).lean();
-    if (dup) return bad(res, 409, "You already have a registration for this event");
-
-    // Build payment seed from event
-    const payment = {
-      method: ev.payment?.method || "none",
-      currency: ev.payment?.currency || "INR",
-      amount: typeof ev.payment?.price === "number" ? ev.payment.price : 0,
-      status: ev.payment?.method === "none" ? "none" : "pending",
-      gatewayProvider: ev.payment?.gatewayProvider,
-      gatewayLink: ev.payment?.gatewayLink
-    };
-
-    // Team validation
-    let teamDoc;
-    if (type === "team") {
-      if (!team || !Array.isArray(team.members) || team.members.length < 1) {
-        return bad(res, 422, "Team registrations require at least 1 member (besides the leader)");
-      }
-      const cleanMembers = team.members
-        .map((m) => ({
-          name: String(m.name || "").trim(),
-          email: String(m.email || "").toLowerCase().trim()
-        }))
-        .filter((m) => m.name && m.email);
-
-      if (cleanMembers.length !== team.members.length) {
-        return bad(res, 422, "Each team member must have name and email");
-      }
-
-      // De-dupe member emails and ensure leader's email is not listed as member
-      const emails = new Set(cleanMembers.map((m) => m.email));
-      if (emails.has(String(actor.email).toLowerCase())) {
-        return bad(res, 422, "Leader cannot also be listed as a team member");
-      }
-      if (emails.size !== cleanMembers.length) {
-        return bad(res, 422, "Duplicate member emails found");
-      }
-
-      teamDoc = {
-        name: team.name ? String(team.name).trim() : undefined,
-        members: cleanMembers,
-        size: cleanMembers.length + 1 // include leader
-      };
-    }
-
-    const doc = await Registration.create({
-      event: ev._id,
-      user: actor._id,
+      user: leader._id,
       type,
-      team: teamDoc,
-      status: payment.method === "none" ? "confirmed" : "pending",
-      payment,
-      notes: typeof notes === "string" ? notes.trim() : undefined,
-      eventName: ev.name,
-      userEmail: actor.email
+      team: type === "team" ? (team || {}) : undefined,
+      notes,
+      eventName: req.body.eventName || undefined,
+      userEmail: leader.email,
+      status: "pending",
+      payment: { method: "gateway", status: "none", currency: "INR", amount: 0, gatewayProvider: "razorpay" }
     });
 
-    // Response hints for client based on payment type
-    const hints =
-      payment.method === "none"
-        ? { next: "confirmed" }
-        : payment.method === "gateway"
-        ? { next: "pay_gateway", gatewayLink: payment.gatewayLink, provider: payment.gatewayProvider }
-        : { next: "submit_qr_proof" };
+    // Determine who still needs to pay the one-time fee
+    const emails = uniqueEmailsFromRegistration(reg);
+    const usersByEmail = await User.find({ email: { $in: emails } }).select("_id email hasPaidEventFee");
+    const byEmail = new Map(usersByEmail.map(u => [u.email, u]));
+    const unpaidEmails = emails.filter(e => !(byEmail.get(e)?.hasPaidEventFee));
+    const toChargeCount = unpaidEmails.length;
 
-    return res.status(201).json({ success: true, data: doc, hints });
+    if (toChargeCount === 0) {
+      // Everyone covered already → free, instant confirm
+      reg.payment.status = "paid";
+      reg.payment.amount = 0;
+      reg.status = "confirmed";
+      await reg.save();
+
+      return res.status(201).json({
+        success: true,
+        registration: reg,
+        payment: { required: false }
+      });
+    }
+
+    // Charge only the people who have never paid before
+    const amountPaise = FEE * 100 * toChargeCount;
+
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: "INR",
+      receipt: `reg_${reg._id}_${Date.now()}`,
+      notes: {
+        registrationId: String(reg._id),
+        leaderEmail: leader.email,
+        unpaidCount: String(toChargeCount)
+      }
+    });
+
+    await Payment.create({
+      user: leader._id,
+      registration: reg._id,
+      memberEmails: unpaidEmails,
+      amount: amountPaise,
+      currency: "INR",
+      orderId: order.id,
+      status: "created"
+    });
+
+    reg.payment.status = "pending";
+    reg.payment.amount = amountPaise / 100; // in INR for display
+    reg.payment.gatewayOrderId = order.id;
+    await reg.save();
+
+    return res.status(201).json({
+      success: true,
+      registration: reg,
+      payment: {
+        required: true,
+        provider: "razorpay",
+        keyId: process.env.RAZORPAY_KEY_ID,
+        order: { id: order.id, amount: order.amount, currency: order.currency }
+      }
+    });
   } catch (err) {
-    logger.error("registration.create error", { error: err.message });
+    // Handle duplicate active registration nicely
+    if (err?.code === 11000) {
+      return res.status(409).json({ success: false, message: "You already have an active registration for this event." });
+    }
     next(err);
   }
 };
 
-/**
- * GET /api/v1/registrations/my
- */
 exports.listMine = async (req, res, next) => {
   try {
-    if (!req.user) return bad(res, 401, "Unauthorized");
-
-    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
-    const skip = (page - 1) * limit;
-
-    const [items, total] = await Promise.all([
-      Registration.find({ user: req.user._id })
-        .sort("-createdAt")
-        .skip(skip)
-        .limit(limit)
-        .populate("event", "name startAt endAt department status")
-        .lean(),
-      Registration.countDocuments({ user: req.user._id })
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      meta: { total, page, limit, hasMore: skip + items.length < total },
-      data: items
-    });
-  } catch (err) {
-    next(err);
-  }
+    if (!req.user) return res.status(401).json({ success: false, message: "Unauthorized" });
+    const regs = await Registration.find({ user: req.user._id }).sort({ createdAt: -1 });
+    res.json({ success: true, items: regs });
+  } catch (err) { next(err); }
 };
 
-/**
- * GET /api/v1/registrations/:id
- */
 exports.getById = async (req, res, next) => {
   try {
-    const { id } = req.params || {};
-    if (!isObjectId(id)) return bad(res, 422, "Invalid registration id");
+    const reg = await Registration.findById(req.params.id);
+    if (!reg) return res.status(404).json({ success: false, message: "Registration not found" });
 
-    const reg = await Registration.findById(id)
-      .populate("event", "department name status isActive")
-      .populate("user", "name email role department")
-      .lean();
+    const isOwner = String(reg.user) === String(req.user?._id);
+    const isAdmin = ["super_admin", "department_admin"].includes(req.user?.role);
+    if (!isOwner && !isAdmin) return res.status(403).json({ success: false, message: "Forbidden" });
 
-    if (!reg) return bad(res, 404, "Not found");
-
-    // owner
-    if (String(reg.user?._id || reg.user) === String(req.user?._id)) {
-      return res.status(200).json({ success: true, data: reg });
-    }
-
-    // admins
-    const role = req.user?.role;
-    if (role === "super_admin") {
-      return res.status(200).json({ success: true, data: reg });
-    }
-    if (role === "department_admin") {
-      const deptId = String(reg.event?.department || "");
-      if (deptId && String(req.user.department || "") === deptId) {
-        return res.status(200).json({ success: true, data: reg });
-      }
-    }
-
-    return bad(res, 403, "Forbidden");
-  } catch (err) {
-    next(err);
-  }
+    res.json({ success: true, registration: reg });
+  } catch (err) { next(err); }
 };
 
-/**
- * POST /api/v1/registrations/:id/payment/qr
- */
-exports.submitQrProof = async (req, res, next) => {
-  try {
-    const { id } = req.params || {};
-    const { qrReference, qrScreenshotUrl } = req.body || {};
-    if (!isObjectId(id)) return bad(res, 422, "Invalid registration id");
-    if (!req.user) return bad(res, 401, "Unauthorized");
-
-    const reg = await Registration.findById(id);
-    if (!reg) return bad(res, 404, "Registration not found");
-    if (String(reg.user) !== String(req.user._id)) return bad(res, 403, "Forbidden");
-
-    if (reg.payment.method !== "qr") return bad(res, 422, "This registration does not use QR payments");
-    if (!qrReference || !String(qrReference).trim()) return bad(res, 422, "qrReference is required");
-
-    reg.payment.qrReference = String(qrReference).trim();
-    if (typeof qrScreenshotUrl === "string") reg.payment.qrScreenshotUrl = qrScreenshotUrl.trim();
-    await reg.save();
-
-    return res.status(200).json({ success: true, message: "QR details submitted; awaiting verification." });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * PATCH /api/v1/registrations/:id/verify-payment
- */
-exports.adminVerifyPayment = async (req, res, next) => {
-  try {
-    const { id } = req.params || {};
-    if (!isObjectId(id)) return bad(res, 422, "Invalid registration id");
-
-    const reg = await Registration.findById(id).populate("event", "department");
-    if (!reg) return bad(res, 404, "Registration not found");
-
-    const role = req.user?.role;
-    if (role !== "super_admin" && role !== "department_admin") return bad(res, 403, "Forbidden");
-    if (
-      role === "department_admin" &&
-      String(req.user.department || "") !== String(reg.event?.department || "")
-    ) {
-      return bad(res, 403, "Forbidden");
-    }
-
-    if (reg.payment.method === "none") {
-      return bad(res, 422, "Free registration does not require verification");
-    }
-
-    const { status } = req.body || {};
-    if (!["paid", "failed"].includes(status)) {
-      return bad(res, 422, "status must be 'paid' or 'failed'");
-    }
-
-    reg.payment.status = status;
-    if (status === "paid") {
-      reg.payment.verifiedAt = new Date();
-      reg.payment.verifiedBy = req.user._id;
-      reg.status = "confirmed";
-    } else {
-      reg.status = "pending"; // (or set 'cancelled' if that’s your policy)
-    }
-    await reg.save();
-
-    return res.status(200).json({ success: true, data: reg });
-  } catch (err) {
-    next(err);
-  }
-};
+// QR/manual payment is removed entirely.
+// No adminVerifyPayment anymore (all automatic via webhook).
