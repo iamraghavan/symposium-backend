@@ -13,4 +13,9 @@ router.use("/departments", require("../departmentRoutes"));
 router.use("/registrations", require("../registrationRoutes")); 
 router.use("/symposium-payments", require("../symposiumPayments"));
 
+// analytics module
+router.use("/analytics", require("../analyticsRoutes"));
+// finance module
+router.use("/finance", require("../financeRoutes"));
+
 module.exports = router;
