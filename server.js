@@ -11,7 +11,8 @@ const openapi = require("./docs/openapi");
 const errorHandler = require("./middleware/errorHandler");
 const acceptJson = require("./middleware/acceptJson");
 const apiKeyGate = require("./middleware/apiKey");
-
+const analyticsRoutes = require("./routes/analyticsRoutes");
+const financeRoutes   = require("./routes/financeRoutes");
 const app = express();
 
 /* ---- Security & Core Middleware ---- */
@@ -36,6 +37,9 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openapi, {
     persistAuthorization: true, // keep apiKey/JWT in UI across refresh
   }
 }));
+
+app.use("/api/v1/analytics", analyticsRoutes);
+app.use("/api/v1/finance",   financeRoutes);
 
 
 
