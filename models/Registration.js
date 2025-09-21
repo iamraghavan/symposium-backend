@@ -13,21 +13,25 @@ const teamSchema = new mongoose.Schema({
   size: { type: Number, min: 1 }
 }, { _id: false });
 
+const paymentEventSchema = new mongoose.Schema({
+  kind: { type: String, enum: ["order_created", "checkout_ack", "webhook_paid"], required: true },
+  at:   { type: Date, default: Date.now },
+  data: { type: Object },
+}, { _id: false });
+
 const paymentDetailSchema = new mongoose.Schema({
-  method: { type: String, enum: ["none", "gateway"], required: true, default: "gateway" },
-  currency: { type: String, default: "INR" },
-  amount: { type: Number, min: 0, default: 0 },
+  method:  { type: String, enum: ["none", "gateway"], default: "gateway", required: true },
+  currency:{ type: String, default: "INR" },
+  amount:  { type: Number, min: 0, default: 0 }, // INR for display
 
-  status: { type: String, enum: ["none", "pending", "paid", "failed"], default: "none", index: true },
+  status:  { type: String, enum: ["none", "pending", "paid", "failed"], default: "none", index: true },
 
-  // gateway
-  gatewayProvider: { type: String, trim: true, default: "razorpay" },
-  gatewayOrderId: { type: String, trim: true },
-  gatewayPaymentId: { type: String, trim: true },   // last successful payment id (for convenience)
-  gatewaySignature: { type: String, trim: true },   // optional (if you verify via checkout payload)
+  gatewayProvider:   { type: String, default: "razorpay" },
+  gatewayOrderId:    { type: String, trim: true },
+  gatewayPaymentId:  { type: String, trim: true },   // last success
+  verifiedAt:        { type: Date, default: null },
 
-  verifiedAt: { type: Date, default: null },
-  verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
+  history: { type: [paymentEventSchema], default: [] } // append-only audit line
 }, { _id: false });
 
 const registrationSchema = new mongoose.Schema({

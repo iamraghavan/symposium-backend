@@ -3,16 +3,18 @@ const apiKeyGate = require("../middleware/apiKey");
 const ctrl = require("../controllers/registrationController");
 
 const router = express.Router();
-
 router.use(apiKeyGate);
 
-// Create a registration (individual or team)
+// Idempotent create (individual or team)
 router.post("/", ctrl.create);
 
-// My registrations (per-user)
+// Optional client ack (analytics only; webhook is truth)
+router.post("/:id/checkout-ack", ctrl.checkoutAck);
+
+// My registrations
 router.get("/my", ctrl.listMine);
 
-// Get a registration by id (owner or admins)
+// Get one (owner or admin)
 router.get("/:id", ctrl.getById);
 
 module.exports = router;
