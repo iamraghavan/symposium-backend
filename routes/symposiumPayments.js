@@ -15,4 +15,7 @@ router.post("/symposium/order", ctrl.createOrder);
 // Verify payment signature and mark users paid
 router.post("/symposium/verify", ctrl.verify);
 
+// NEW: Store+Verify+Finalize in one endpoint (upserts Payment if missing)
+router.post("/symposium/update", ctrl.updatePayment);
+
 module.exports = router;
