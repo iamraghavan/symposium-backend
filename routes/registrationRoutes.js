@@ -1,15 +1,21 @@
 const express = require("express");
 const apiKeyGate = require("../middleware/apiKey");
 const ctrl = require("../controllers/registrationController");
+const { requireSymposiumPaidLeader, requireSymposiumPaidAll } = require("../middleware/symposiumPaid");
 
 const router = express.Router();
-
 router.use(apiKeyGate);
 
-// Idempotent create
-router.post("/", ctrl.create);
+// For a single endpoint handling both individual & team,
+// choose middleware based on body.type via a small wrapper:
+router.post("/", (req, res, next) => {
+  if ((req.body?.type || "individual") === "team") {
+    return requireSymposiumPaidAll(req, res, next);
+  }
+  return requireSymposiumPaidLeader(req, res, next);
+}, ctrl.create);
 
-// Optional client ack (analytics only; does not affect state)
+// Optional analytics
 router.post("/:id/checkout-ack", ctrl.checkoutAck);
 
 // My registrations

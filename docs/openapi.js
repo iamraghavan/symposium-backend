@@ -4,9 +4,12 @@ const openapi = {
   info: {
     title: "EGSPEC API",
     description:
-      "Authentication, Departments & Events endpoints secured via **x-api-key** (global or per-user).\n" +
-      "Google sign-in returns a per-user API key (plaintext, shown once). Email/password login may still return JWT for legacy clients.",
-    version: "1.3.0"
+      "All /api/* endpoints are secured with **x-api-key** (global or per-user).\n" +
+      "- Google sign-in issues a **per-user API key** (plaintext shown once).\n" +
+      "- Email/password still returns a JWT for legacy clients.\n" +
+      "- **Symposium fee** (₹250/head) is paid once per person and then all event registrations are FREE.\n" +
+      "- **Registrations are free** but require the symposium fee to be paid for leader + team.",
+    version: "1.4.0"
   },
   servers: [{ url: "http://localhost:8000", description: "Local" }],
   tags: [
@@ -16,7 +19,8 @@ const openapi = {
     { name: "API Keys" },
     { name: "Departments" },
     { name: "Events" },
-    { name: "Registrations" } // ⬅️ NEW
+    { name: "Registrations" },
+    { name: "Symposium Payments" }
   ],
   components: {
     securitySchemes: {
@@ -26,8 +30,8 @@ const openapi = {
         name: "x-api-key",
         description:
           "Required for **all** /api/* endpoints.\n" +
-          "- Use the **global** key (server-level) to call public auth endpoints like Google exchange.\n" +
-          "- Use the **per-user** key (returned on Google sign-in/admin create/rotate) to call user-scoped endpoints like /auth/me or registrations."
+          "- Use a **per-user** key (Google sign-in) for user-scoped endpoints like /auth/me or /registrations.\n" +
+          "- A global/server key may be used where configured."
       }
     },
     schemas: {
@@ -40,6 +44,32 @@ const openapi = {
           details: { type: "array", items: { type: "object" }, nullable: true }
         }
       },
+      SimpleOkResponse: {
+        type: "object",
+        properties: { success: { type: "boolean", example: true }, message: { type: "string", example: "OK" } }
+      },
+      PaymentRequiredResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: false },
+          message: { type: "string", example: "Symposium entry fee unpaid" },
+          payment: {
+            type: "object",
+            nullable: true,
+            properties: {
+              neededFor: { type: "array", items: { type: "string", example: "student@example.com" } },
+              feeInInr: { type: "integer", example: 250 }
+            }
+          },
+          unpaidEmails: {
+            type: "array",
+            nullable: true,
+            items: { type: "string", example: "teammate@example.com" }
+          }
+        }
+      },
+
+      /* ===== Users/Auth ===== */
       User: {
         type: "object",
         properties: {
@@ -55,13 +85,13 @@ const openapi = {
           locale: { type: "string", nullable: true },
           emailVerified: { type: "boolean", example: true },
           address: { type: "string", nullable: true },
+          hasPaidSymposium: { type: "boolean", example: true },
+          symposiumPaidAt: { type: "string", format: "date-time", nullable: true },
           isActive: { type: "boolean", example: true },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" }
         }
       },
-
-      /* ===== Auth: email/password ===== */
       LoginRequest: {
         type: "object",
         required: ["email", "password"],
@@ -79,7 +109,7 @@ const openapi = {
           apiKey: {
             type: "string",
             nullable: true,
-            description: "Returned only for admins if stored or newly minted.",
+            description: "Returned for admins if stored or newly minted.",
             example: "uk_193f8fbb2bf99e8c494041e67e0aaf8ad299831e"
           }
         }
@@ -103,13 +133,11 @@ const openapi = {
           user: { $ref: "#/components/schemas/User" }
         }
       },
-
-      /* ===== Auth: Google (API key flow) ===== */
       GoogleIdTokenRequest: {
         type: "object",
         required: ["idToken"],
         properties: {
-          idToken: { type: "string", description: "Google ID token from GSI button" },
+          idToken: { type: "string", description: "Google ID token from GSI" },
           departmentId: { type: "string", nullable: true },
           address: { type: "string", nullable: true }
         }
@@ -128,14 +156,12 @@ const openapi = {
           success: { type: "boolean", example: true },
           apiKey: {
             type: "string",
-            description: "Per-user API key (plaintext). Save it now; will not be returned again.",
+            description: "Per-user API key (plaintext). Save it now; shown only once.",
             example: "uk_5f3b1b7aa0c24b76d9f0b8c1088a9e6345e1b2d9"
           },
           user: { $ref: "#/components/schemas/User" }
         }
       },
-
-      /* ===== Admin user mgmt & API keys ===== */
       CreateUserRequest: {
         type: "object",
         required: ["name", "email"],
@@ -156,7 +182,7 @@ const openapi = {
           data: { $ref: "#/components/schemas/User" },
           apiKey: {
             type: "string",
-            description: "Per-user API key (plaintext) — shown once on creation.",
+            description: "Per-user API key (plaintext). Save it now.",
             example: "uk_193f8fbb2bf99e8c494041e67e0aaf8ad299831e"
           }
         }
@@ -198,13 +224,6 @@ const openapi = {
             description: "New per-user API key (plaintext). Save it now.",
             example: "uk_a1b2c3d4e5f6a7b8c9d0e1f22334455667788990"
           }
-        }
-      },
-      SimpleOkResponse: {
-        type: "object",
-        properties: {
-          success: { type: "boolean", example: true },
-          message: { type: "string", example: "Logged out" }
         }
       },
 
@@ -268,10 +287,7 @@ const openapi = {
           online: {
             type: "object",
             nullable: true,
-            properties: {
-              provider: { type: "string", example: "other" },
-              url: { type: "string", example: "https://meet.example.com/abc" }
-            }
+            properties: { provider: { type: "string" }, url: { type: "string" } }
           },
           offline: {
             type: "object",
@@ -290,25 +306,13 @@ const openapi = {
             type: "object",
             properties: {
               method: { type: "string", example: "none" },
-              gatewayProvider: { type: "string", nullable: true },
-              gatewayLink: { type: "string", nullable: true },
-              price: { type: "number", nullable: true, example: 0 },
               currency: { type: "string", example: "INR" },
-              qrImageUrl: { type: "string", nullable: true },
-              qrInstructions: { type: "string", nullable: true },
-              allowScreenshot: { type: "boolean", example: true }
+              price: { type: "number", example: 0 }
             }
           },
           contacts: {
             type: "array",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                phone: { type: "string" },
-                email: { type: "string" }
-              }
-            }
+            items: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, email: { type: "string" } } }
           },
           departmentSite: { type: "string", nullable: true },
           contactEmail: { type: "string", nullable: true },
@@ -376,7 +380,7 @@ const openapi = {
         }
       },
 
-      /* ===== Registrations (NEW) ===== */
+      /* ===== Registrations ===== */
       Registration: {
         type: "object",
         properties: {
@@ -402,23 +406,18 @@ const openapi = {
               }
             }
           },
-          status: { type: "string", enum: ["pending", "confirmed", "cancelled"], example: "pending" },
+          status: { type: "string", enum: ["pending", "confirmed", "cancelled"], example: "confirmed" },
           payment: {
             type: "object",
             properties: {
-              method: { type: "string", enum: ["none", "gateway", "qr"], example: "qr" },
+              method: { type: "string", enum: ["none", "gateway"], example: "gateway" },
               currency: { type: "string", example: "INR" },
-              amount: { type: "number", example: 99 },
-              status: { type: "string", enum: ["none", "pending", "paid", "failed"], example: "pending" },
+              amount: { type: "number", example: 0 },
+              status: { type: "string", enum: ["none", "pending", "paid", "failed"], example: "paid" },
               gatewayProvider: { type: "string", nullable: true, example: "razorpay" },
-              gatewayLink: { type: "string", nullable: true },
               gatewayOrderId: { type: "string", nullable: true },
               gatewayPaymentId: { type: "string", nullable: true },
-              gatewaySignature: { type: "string", nullable: true },
-              qrReference: { type: "string", nullable: true, example: "UTR123456" },
-              qrScreenshotUrl: { type: "string", nullable: true },
-              verifiedAt: { type: "string", format: "date-time", nullable: true },
-              verifiedBy: { type: "string", nullable: true }
+              verifiedAt: { type: "string", format: "date-time", nullable: true }
             }
           },
           notes: { type: "string", nullable: true },
@@ -444,10 +443,7 @@ const openapi = {
                 items: {
                   type: "object",
                   required: ["name", "email"],
-                  properties: {
-                    name: { type: "string" },
-                    email: { type: "string" }
-                  }
+                  properties: { name: { type: "string" }, email: { type: "string" } }
                 }
               }
             }
@@ -459,19 +455,14 @@ const openapi = {
         type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          data: { $ref: "#/components/schemas/Registration" },
-          hints: {
+          registration: { $ref: "#/components/schemas/Registration" },
+          payment: {
             type: "object",
-            description: "Next-step hint based on payment method",
-            oneOf: [
-              { type: "object", properties: { next: { type: "string", example: "confirmed" } } },
-              { type: "object", properties: {
-                  next: { type: "string", example: "pay_gateway" },
-                  gatewayLink: { type: "string" },
-                  provider: { type: "string" }
-              }},
-              { type: "object", properties: { next: { type: "string", example: "submit_qr_proof" } } }
-            ]
+            properties: {
+              needsPayment: { type: "boolean", example: false },
+              feeInInr: { type: "integer", example: 250 },
+              unpaidCount: { type: "integer", example: 0 }
+            }
           }
         }
       },
@@ -479,38 +470,73 @@ const openapi = {
         type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          meta: {
-            type: "object",
-            properties: {
-              total: { type: "integer", example: 2 },
-              page: { type: "integer", example: 1 },
-              limit: { type: "integer", example: 20 },
-              hasMore: { type: "boolean", example: false }
-            }
-          },
-          data: { type: "array", items: { $ref: "#/components/schemas/Registration" } }
+          items: { type: "array", items: { $ref: "#/components/schemas/Registration" } }
         }
       },
       SingleRegistrationResponse: {
         type: "object",
+        properties: { success: { type: "boolean", example: true }, registration: { $ref: "#/components/schemas/Registration" } }
+      },
+
+      /* ===== Symposium Payments ===== */
+      SymposiumStatusEntry: {
+        type: "object",
+        properties: { email: { type: "string", example: "alice@example.com" }, hasPaid: { type: "boolean", example: true } }
+      },
+      SymposiumStatusResponse: {
+        type: "object",
+        properties: { success: { type: "boolean", example: true }, entries: { type: "array", items: { $ref: "#/components/schemas/SymposiumStatusEntry" } } }
+      },
+      SymposiumOrderRequest: {
+        type: "object",
+        properties: {
+          emails: {
+            type: "array",
+            description: "Optional extra emails besides the caller to pay for now",
+            items: { type: "string", example: "bob@example.com" }
+          }
+        }
+      },
+      SymposiumOrderResponse: {
+        type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          data: { $ref: "#/components/schemas/Registration" }
+          payment: {
+            type: "object",
+            properties: {
+              needsPayment: { type: "boolean", example: true },
+              keyId: { type: "string", example: "rzp_test_xxx" },
+              order: {
+                type: "object",
+                properties: {
+                  id: { type: "string", example: "order_9A33XWu170gUtm" },
+                  amount: { type: "integer", example: 25000 },
+                  currency: { type: "string", example: "INR" }
+                }
+              }
+            }
+          },
+          message: { type: "string", nullable: true }
         }
       },
-      SubmitQrProofRequest: {
+      SymposiumVerifyRequest: {
         type: "object",
-        required: ["qrReference"],
+        required: ["razorpay_order_id", "razorpay_payment_id", "razorpay_signature"],
         properties: {
-          qrReference: { type: "string", example: "UTR987654321" },
-          qrScreenshotUrl: { type: "string", nullable: true }
+          razorpay_order_id: { type: "string", example: "order_9A33XWu170gUtm" },
+          razorpay_payment_id: { type: "string", example: "pay_29QQoUBi66xm2f" },
+          razorpay_signature: { type: "string", example: "generated_signature_here" }
         }
       },
-      VerifyPaymentRequest: {
+      SymposiumVerifyResponse: {
         type: "object",
-        required: ["status"],
         properties: {
-          status: { type: "string", enum: ["paid", "failed"], example: "paid" }
+          success: { type: "boolean", example: true },
+          covered: {
+            type: "array",
+            items: { type: "object", properties: { email: { type: "string" }, hasPaidSymposium: { type: "boolean" } } }
+          },
+          message: { type: "string", nullable: true }
         }
       }
     }
@@ -552,8 +578,7 @@ const openapi = {
         responses: {
           200: { description: "Login success", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginResponse" } } } },
           400: { description: "Invalid credentials", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          401: { description: "Unauthorized (missing/invalid x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          401: { description: "Unauthorized (missing/invalid x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
@@ -565,8 +590,7 @@ const openapi = {
         responses: {
           201: { description: "Registered", content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterResponse" } } } },
           401: { description: "Unauthorized (x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          409: { description: "User already exists" },
-          422: { description: "Validation failed" }
+          409: { description: "User already exists" }
         }
       }
     },
@@ -579,20 +603,18 @@ const openapi = {
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleIdTokenRequest" } } } },
         responses: {
           200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleAuthResponse" } } } },
-          401: { description: "Unauthorized (x-api-key or Google verify failed)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          401: { description: "Unauthorized (x-api-key or Google verify failed)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
     "/api/v1/auth/oauth/google/verify": {
       post: {
         tags: ["Auth"],
-        summary: "Google OAuth code exchange → id_token → returns per-user API key (no JWT)",
+        summary: "Google OAuth code exchange → id_token → per-user API key",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleCodeVerifyRequest" } } } },
         responses: {
           200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/GoogleAuthResponse" } } } },
-          401: { description: "Unauthorized (x-api-key or Google exchange failed)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
@@ -601,50 +623,33 @@ const openapi = {
     "/api/v1/auth/me": {
       get: {
         tags: ["Auth"],
-        summary: "Current principal resolved from x-api-key (per-user key)",
+        summary: "Current principal (from x-api-key)",
         responses: {
-          200: {
-            description: "Current user",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { success: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } }
-                }
-              }
-            }
-          },
-          401: { description: "Unauthorized (x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } } } } } },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
     "/api/v1/auth/logout": {
-      post: {
-        tags: ["Auth"],
-        summary: "Logout (client removes credential; stateless)",
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }
-        }
-      }
+      post: { tags: ["Auth"], summary: "Logout (client forgets credential; stateless)", responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } } } }
     },
 
     /* ===== Admin Users ===== */
     "/api/v1/auth/users": {
       post: {
         tags: ["Admin Users"],
-        summary: "Create user (super_admin & department_admin). Returns a per-user apiKey (plaintext).",
+        summary: "Create user (super_admin & department_admin). Returns API key (plaintext).",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserRequest" } } } },
         responses: {
           201: { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateUserResponse" } } } },
-          401: { description: "Unauthorized (x-api-key)" },
-          403: { description: "Forbidden (role not allowed)" },
-          409: { description: "User already exists" },
-          422: { description: "Validation failed" }
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          409: { description: "User already exists" }
         }
       },
       get: {
         tags: ["Admin Users"],
-        summary: "List users (scoped). super_admin & department_admin",
+        summary: "List users (scoped)",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
@@ -654,11 +659,7 @@ const openapi = {
           { name: "q", in: "query", schema: { type: "string" } },
           { name: "isActive", in: "query", schema: { type: "boolean" } }
         ],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListUsersResponse" } } } },
-          401: { description: "Unauthorized (x-api-key)" },
-          403: { description: "Forbidden" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListUsersResponse" } } } }, 401: { description: "Unauthorized" }, 403: { description: "Forbidden" } }
       }
     },
     "/api/v1/auth/users/{id}": {
@@ -667,18 +668,10 @@ const openapi = {
         summary: "Get user by id (scoped)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } }
-              }
-            }
-          },
+          200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } },
           401: { description: "Unauthorized" },
           403: { description: "Forbidden" },
-          404: { description: "Not found" },
-          422: { description: "Invalid id" }
+          404: { description: "Not found" }
         }
       },
       patch: {
@@ -686,31 +679,13 @@ const openapi = {
         summary: "Update user (scoped)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateUserRequest" } } } },
-        responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } }
-              }
-            }
-          },
-          401: { description: "Unauthorized" },
-          403: { description: "Forbidden" },
-          404: { description: "Not found" },
-          422: { description: "Invalid id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/User" } } } } } }, 404: { description: "Not found" } }
       },
       delete: {
         tags: ["Admin Users"],
-        summary: "Soft delete user (isActive=false)",
+        summary: "Soft delete (isActive=false)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
-          401: { description: "Unauthorized" },
-          403: { description: "Forbidden" },
-          404: { description: "Not found" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }, 404: { description: "Not found" } }
       }
     },
 
@@ -718,29 +693,17 @@ const openapi = {
     "/api/v1/auth/apikey/rotate/{userId}": {
       post: {
         tags: ["API Keys"],
-        summary: "Rotate per-user API key (admin can rotate scoped users; user can rotate self)",
+        summary: "Rotate per-user API key",
         parameters: [{ name: "userId", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/APIKeyRotateResponse" } } } },
-          401: { description: "Unauthorized" },
-          403: { description: "Forbidden" },
-          404: { description: "User not found" },
-          422: { description: "Invalid user id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/APIKeyRotateResponse" } } } }, 404: { description: "User not found" } }
       }
     },
     "/api/v1/auth/apikey/revoke/{userId}": {
       post: {
         tags: ["API Keys"],
-        summary: "Revoke per-user API key (clears plaintext + hash + prefix)",
+        summary: "Revoke per-user API key",
         parameters: [{ name: "userId", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
-          401: { description: "Unauthorized" },
-          403: { description: "Forbidden" },
-          404: { description: "User not found" },
-          422: { description: "Invalid user id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }, 404: { description: "User not found" } }
       }
     },
 
@@ -748,7 +711,7 @@ const openapi = {
     "/api/v1/departments": {
       get: {
         tags: ["Departments"],
-        summary: "List departments (requires x-api-key). Only active unless super_admin & includeInactive=true",
+        summary: "List departments",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 50 } },
@@ -756,80 +719,34 @@ const openapi = {
           { name: "q", in: "query", schema: { type: "string" } },
           { name: "includeInactive", in: "query", schema: { type: "boolean" } }
         ],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListDepartmentsResponse" } } } }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListDepartmentsResponse" } } } } }
       },
       post: {
         tags: ["Departments"],
         summary: "Create department (super_admin)",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateDepartmentRequest" } } } },
-        responses: {
-          201: {
-            description: "Created",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } }
-                }
-              }
-            }
-          },
-          409: { description: "Duplicate code/shortcode" },
-          422: { description: "Validation failed" }
-        }
+        responses: { 201: { description: "Created", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } } }
       }
     },
     "/api/v1/departments/{id}": {
       get: {
         tags: ["Departments"],
-        summary: "Get department by id (requires x-api-key). Only active unless super_admin & includeInactive=true",
-        parameters: [
-          { name: "id", in: "path", required: true, schema: { type: "string" } },
-          { name: "includeInactive", in: "query", schema: { type: "boolean" } }
-        ],
-        responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } }
-              }
-            }
-          },
-          404: { description: "Not found" },
-          422: { description: "Invalid department id" }
-        }
+        summary: "Get department by id",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }, { name: "includeInactive", in: "query", schema: { type: "boolean" } }],
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } }, 404: { description: "Not found" } }
       },
       patch: {
         tags: ["Departments"],
         summary: "Update department (super_admin)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateDepartmentRequest" } } } },
-        responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } }
-              }
-            }
-          },
-          409: { description: "Duplicate code/shortcode" },
-          404: { description: "Not found" },
-          422: { description: "Invalid department id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Department" } } } } } } }
       },
       delete: {
         tags: ["Departments"],
-        summary: "Soft delete department (isActive=false) (super_admin)",
+        summary: "Soft delete (isActive=false)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
-          404: { description: "Not found" },
-          422: { description: "Invalid department id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }, 404: { description: "Not found" } }
       }
     },
 
@@ -837,7 +754,7 @@ const openapi = {
     "/api/v1/events": {
       get: {
         tags: ["Events"],
-        summary: "Public (requires x-api-key): list published events only",
+        summary: "Public: list published events",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
@@ -846,85 +763,40 @@ const openapi = {
           { name: "q", in: "query", schema: { type: "string" } },
           { name: "upcoming", in: "query", schema: { type: "boolean" } }
         ],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListEventsResponse" } } } }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListEventsResponse" } } } } }
       },
       post: {
         tags: ["Events"],
-        summary: "Create event (super_admin or department_admin; dept-admin limited to own department)",
+        summary: "Create event (super_admin or department_admin; scoped)",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateEventRequest" } } } },
-        responses: {
-          201: {
-            description: "Created",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } }
-                }
-              }
-            }
-          },
-          403: { description: "Forbidden (wrong department scope)" },
-          422: { description: "Validation failed" }
-        }
+        responses: { 201: { description: "Created", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } } }
       }
     },
     "/api/v1/events/{id}": {
       get: {
         tags: ["Events"],
-        summary: "Public (requires x-api-key): get one event by id (published-only)",
+        summary: "Public: get event by id (published-only)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } }
-              }
-            }
-          },
-          403: { description: "Forbidden (not published)" },
-          404: { description: "Not found" },
-          422: { description: "Invalid event id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } }, 404: { description: "Not found" } }
       },
       patch: {
         tags: ["Events"],
-        summary: "Update event (super_admin or department_admin; scoped)",
+        summary: "Update event (scoped admins)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateEventRequest" } } } },
-        responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } }
-              }
-            }
-          },
-          403: { description: "Forbidden (wrong department scope)" },
-          404: { description: "Not found" },
-          422: { description: "Validation failed" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } } }
       },
       delete: {
         tags: ["Events"],
-        summary: "Soft delete event (isActive=false) (super_admin or department_admin; scoped)",
+        summary: "Soft delete event (scoped admins)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } },
-          403: { description: "Forbidden (wrong department scope)" },
-          404: { description: "Not found" },
-          422: { description: "Invalid event id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } } }, 404: { description: "Not found" } }
       }
     },
     "/api/v1/events/admin": {
       get: {
         tags: ["Events"],
-        summary: "Admin: list events (ALL statuses). dept_admin limited to own dept; super_admin can filter departmentId.",
+        summary: "Admin: list events (all statuses)",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
@@ -934,54 +806,34 @@ const openapi = {
           { name: "q", in: "query", schema: { type: "string" } },
           { name: "upcoming", in: "query", schema: { type: "boolean" } }
         ],
-        responses: {
-          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListEventsResponse" } } } },
-          422: { description: "Invalid departmentId/status" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListEventsResponse" } } } } }
       }
     },
     "/api/v1/events/admin/{id}": {
       get: {
         tags: ["Events"],
-        summary: "Admin: get one event (all statuses). dept_admin limited to own department",
+        summary: "Admin: get one event (all statuses)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: {
-          200: {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } }
-              }
-            }
-          },
-          403: { description: "Forbidden (wrong department scope)" },
-          404: { description: "Not found" },
-          422: { description: "Invalid event id" }
-        }
+        responses: { 200: { description: "OK", content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" }, data: { $ref: "#/components/schemas/Event" } } } } } }, 404: { description: "Not found" } }
       }
     },
 
-    /* ===== Registrations (NEW) ===== */
+    /* ===== Registrations (FREE; blocked until symposium paid) ===== */
     "/api/v1/registrations": {
       post: {
         tags: ["Registrations"],
-        summary: "Create a registration (individual or team)",
+        summary: "Create registration (individual or team) — idempotent",
         description:
-          "Requires **per-user x-api-key** (Google login).\n" +
-          "- If event payment.method = `none` ⇒ registration is auto **confirmed**.\n" +
-          "- If `gateway` ⇒ client should redirect to `hints.gatewayLink`.\n" +
-          "- If `qr` ⇒ client should call **Submit QR payment proof**.",
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRegistrationRequest" } } }
-        },
+          "Registration itself is **free**. However, it is **blocked** until the symposium entry fee (₹250/head) is paid for the leader + all team members in the request.\n" +
+          "If unpaid, returns **402 Payment Required** with the list of emails that must pay first.\n" +
+          "Once paid, call this again; returns 201/200 with a confirmed registration.",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRegistrationRequest" } } } },
         responses: {
           201: { description: "Created", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRegistrationResponse" } } } },
-          401: { description: "Unauthorized (x-api-key missing/invalid)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          403: { description: "Only Google users can register", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          404: { description: "Event not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          409: { description: "Duplicate registration", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Validation failed", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          200: { description: "Idempotent hit (existing active registration)", content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRegistrationResponse" } } } },
+          401: { description: "Unauthorized (x-api-key)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          402: { description: "Symposium entry fee unpaid", content: { "application/json": { schema: { $ref: "#/components/schemas/PaymentRequiredResponse" } } } },
+          409: { description: "Duplicate active registration", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
@@ -989,11 +841,6 @@ const openapi = {
       get: {
         tags: ["Registrations"],
         summary: "List my registrations",
-        description: "Requires **per-user x-api-key** (Google login).",
-        parameters: [
-          { name: "page", in: "query", schema: { type: "integer", default: 1 } },
-          { name: "limit", in: "query", schema: { type: "integer", default: 20 } }
-        ],
         responses: {
           200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ListMyRegistrationsResponse" } } } },
           401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
@@ -1003,55 +850,55 @@ const openapi = {
     "/api/v1/registrations/{id}": {
       get: {
         tags: ["Registrations"],
-        summary: "Get a registration by id (owner or admins)",
+        summary: "Get registration by id (owner or admins)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SingleRegistrationResponse" } } } },
           401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          403: { description: "Forbidden (not owner/admin)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          404: { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Invalid id", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          403: { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          404: { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
-    "/api/v1/registrations/{id}/payment/qr": {
+
+    /* ===== Symposium Payments ===== */
+    "/api/v1/symposium-payments/symposium/status": {
+      get: {
+        tags: ["Symposium Payments"],
+        summary: "Check symposium fee status for the caller + optional emails",
+        description: "Query param `emails` is a comma-separated list. Caller is always included.",
+        parameters: [{ name: "emails", in: "query", schema: { type: "string", example: "alice@example.com,bob@example.com" } }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/SymposiumStatusResponse" } } } },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/symposium-payments/symposium/order": {
       post: {
-        tags: ["Registrations"],
-        summary: "Submit QR payment proof (owner)",
-        description: "Attach UPI/QR UTR reference and optional screenshot URL. Requires **per-user x-api-key**.",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/SubmitQrProofRequest" } } }
-        },
+        tags: ["Symposium Payments"],
+        summary: "Create Razorpay order for symposium entry fee (₹250/head)",
+        description:
+          "Body may include extra emails to pay for along with the caller. Only **unpaid** emails are charged. Returns `{ keyId, order }`.",
+        requestBody: { required: false, content: { "application/json": { schema: { $ref: "#/components/schemas/SymposiumOrderRequest" } } } },
         responses: {
-          200: {
-            description: "Submitted; awaiting admin verification",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/SimpleOkResponse" } } }
-          },
-          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          403: { description: "Forbidden (not owner)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          404: { description: "Registration not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Invalid id or payment method not QR", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          201: { description: "Order created", content: { "application/json": { schema: { $ref: "#/components/schemas/SymposiumOrderResponse" } } } },
+          200: { description: "Everyone already paid", content: { "application/json": { schema: { $ref: "#/components/schemas/SymposiumOrderResponse" } } } },
+          401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },
-    "/api/v1/registrations/{id}/verify-payment": {
-      patch: {
-        tags: ["Registrations"],
-        summary: "Admin: verify QR/gateway payment",
-        description: "Role **super_admin** or **department_admin** of the event’s department.",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/VerifyPaymentRequest" } } }
-        },
+    "/api/v1/symposium-payments/symposium/verify": {
+      post: {
+        tags: ["Symposium Payments"],
+        summary: "Verify Razorpay signature and mark users as paid",
+        description: "Server-side verification of `order_id|payment_id` using `RAZORPAY_KEY_SECRET`.",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/SymposiumVerifyRequest" } } } },
         responses: {
-          200: { description: "Updated", content: { "application/json": { schema: { $ref: "#/components/schemas/SingleRegistrationResponse" } } } },
+          200: { description: "Payment verified; users flagged as hasPaidSymposium", content: { "application/json": { schema: { $ref: "#/components/schemas/SymposiumVerifyResponse" } } } },
+          400: { description: "Invalid signature / bad input", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
           401: { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          403: { description: "Forbidden (wrong scope/role)", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          404: { description: "Registration not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
-          422: { description: "Invalid id or status", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          404: { description: "Order not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
         }
       }
     }

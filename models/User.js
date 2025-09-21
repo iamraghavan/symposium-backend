@@ -38,8 +38,8 @@ const userSchema = new mongoose.Schema(
     // Optional address
     address: { type: String, default: null },
 
-    hasPaidEventFee: { type: Boolean, default: false, index: true },
-eventFeePaidAt: { type: Date, default: null },
+    hasPaidSymposium: { type: Boolean, default: false, index: true },
+    symposiumPaidAt:  { type: Date, default: null },
 
     // --- API Key (per-user) ---
     // Plaintext API key (hidden by default). Only select it when you *really* need it.
